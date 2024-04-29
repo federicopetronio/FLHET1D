@@ -258,6 +258,12 @@ def Source(P, S):
         1.0 / (1 + (wce / nu_m) ** 2)
     )  # Effective mobility
 
+    # Compute the anomalous transport term
+    corr = -1e17 # 
+    Psi = 1/(B0 * ni) * corr / (1 + nu_m**2/wce**2)
+    Psi = np.where( x_center < L0, 0.0, Psi)
+    Psi = 0.d0
+
     # DeltaG = Gamma_e / ni
     # grdI = gradient(DeltaG, dz)
 
@@ -265,7 +271,7 @@ def Source(P, S):
     S[1, :] = (ng[:] * ni[:] * Kiz[:] - nu_iw[:] * ni[:]) * M  # Ion Density
     S[2, :] = (
         ng[:] * ni[:] * Kiz[:] * VG
-        - (phy_const.e / (mu_eff[:] * M)) * ni[:] * ve[:]
+        - (phy_const.e / (mu_eff[:] * M)) * ni[:] * (ve[:] - Psi[:])
         - nu_iw[:] * ni[:] * ui[:]
     ) * M  # Momentum
     S[3, :] = (
@@ -611,7 +617,7 @@ if TIMESCHEME == "TVDRK3":
             F_cell,
             F_interf,
         )
-
+        # print(time)
         # Compute the source in the center of the cell
         Source(P, S)
 

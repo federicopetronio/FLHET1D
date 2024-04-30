@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import scipy.constants as phy_const
 import matplotlib.pyplot as plt
 import os
@@ -53,8 +54,8 @@ m = phy_const.m_e  # Electron mass
 R1 = float(physicalParameters["Inner radius"])  # Inner radius of the thruster
 R2 = float(physicalParameters["Outer radius"])  # Outer radius of the thruster
 A0 = np.pi * (R2**2 - R1**2)  # Area of the thruster
-LENGTH = float(physicalParameters["Length of axis"])  # length of Axis of the simulation
-L0 = float(
+LX = float(physicalParameters["Length of axis"])  # length of Axis of the simulation
+LTHR = float(
     physicalParameters["Length of thruster"]
 )  # length of thruster (position of B_max)
 alpha_B1 = float(
@@ -80,7 +81,9 @@ MagneticFieldConfig = config["Magnetic field configuration"]
 if MagneticFieldConfig["Type"] == "Default":
     print(MagneticFieldConfig["Type"] + " Magnetic Field")
 
-    Bmax = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
+    BMAX = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
+    B0 = float(MagneticFieldConfig["B-field at 0"])  # Mag field at x=0
+    BLX = float(MagneticFieldConfig["B-field at LX"])  # Mag field at x=LX
     LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
     LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
     saveBField = bool(MagneticFieldConfig["Save B-field"])
@@ -106,15 +109,27 @@ with open(Results + "/Configuration.cfg", "w") as configfile:
 #           Allocation of large vectors                  #
 ##########################################################
 
-Delta_t = 1.0  # Initialization of Delta_t (do not change)
-Delta_x = LENGTH / NBPOINTS
+def GetImposedB(x_center):
 
-x_mesh = np.linspace(0, LENGTH, NBPOINTS + 1)  # Mesh in the interface
-x_center = np.linspace(Delta_x, LENGTH - Delta_x, NBPOINTS)  # Mesh in the center of cell
-B0 = Bmax * np.exp(-(((x_center - L0) / LB1) ** 2.0))  # Magnetic field within the thruster
-B0 = np.where(x_center < L0, B0, Bmax * np.exp(-(((x_center - L0) / LB2) ** 2.0)))  # Magnetic field outside the thruster
+    a1 = (BMAX - B0)/(1 - math.exp(-LTHR**2/(2*LB1**2)))
+    a2 = (BMAX - BLX)/(1 - math.exp(-(LX - LTHR)**2/(2*LB2**2)))
+    b1 = BMAX - a1
+    b2 = BMAX - a2
+    Barr1 = a1*np.exp(-(x_center - LTHR)**2/(2*LB1**2)) + b1
+    Barr2 = a2*np.exp(-(x_center - LTHR)**2/(2*LB2**2)) + b2    # Magnetic field outside the thruster
+
+    Barr = np.where(x_center <= LTHR, Barr1, Barr2)
+
+    return Barr
+
+Delta_t = 1.0  # Initialization of Delta_t (do not change)
+Delta_x = LX / NBPOINTS
+
+x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
+x_center = np.linspace(Delta_x, LX - Delta_x, NBPOINTS)  # Mesh in the center of cell
+Barr = GetImposedB(x_center)
 alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
-alpha_B = np.where(x_center < L0, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
+alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
 alpha_B_smooth = np.copy(alpha_B)
 
 # smooth between alpha_B1 and alpha_B2
@@ -169,7 +184,6 @@ if Circuit:
 ##########################################################
 #           Formulas defining our model                  #
 ##########################################################
-
 
 @njit
 def PrimToCons(P, U):
@@ -230,18 +244,18 @@ def Source(P, S):
         (4.0 / 3.0) * (1.0 / (R2 - R1)) * np.sqrt(phy_const.e * Te / M)
     )  # Ion - wall collision rate
     # Limit the collisions to inside the thruster
-    index_L0 = np.argmax(x_center > L0)
-    nu_iw[index_L0:] = 0.0
+    index_LTHR = np.argmax(x_center > LTHR)
+    nu_iw[index_LTHR:] = 0.0
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
 
     # TODO: Put decreasing wall collisions (Not needed for the moment)
     #    if decreasing_nu_iw:
     #        index_L1 = np.argmax(z > L1)
-    #        index_L0 = np.argmax(z > L0)
-    #        index_ind = index_L1 - index_L0 + 1
+    #        index_LTHR = np.argmax(z > LTHR)
+    #        index_ind = index_L1 - index_LTHR + 1
     #
-    #        nu_iw[index_L0: index_L1] = nu_iw[index_L0] * np.arange(index_ind, 1, -1) / index_ind
+    #        nu_iw[index_LTHR: index_L1] = nu_iw[index_LTHR] * np.arange(index_ind, 1, -1) / index_ind
     #        nu_iw[index_L1:] = 0.0
 
     ##################################################
@@ -319,8 +333,8 @@ def compute_I(P, V):
         (4.0 / 3.0) * (1.0 / (R2 - R1)) * np.sqrt(phy_const.e * Te / M)
     )  # Ion - wall collision rate d
     # Limit the collisions to inside the thruster
-    index_L0 = np.argmax(x_center > L0)
-    nu_iw[index_L0:] = 0.0
+    index_LTHR = np.argmax(x_center > LTHR)
+    nu_iw[index_LTHR:] = 0.0
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
 

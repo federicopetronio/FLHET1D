@@ -160,6 +160,13 @@ def InviscidFlux(P, F):
     F[3,:] = 5./2.*P[1,:]*phy_const.e*P[3,:]*P[4,:]             # 5/2n_i*e*T_e*v_e
     
 def Source(P, S):
+    def gradient(y, d):
+        dp_dz = np.empty_like(y)
+        dp_dz[1:-1] = (y[2:] - y[:-2]) / (2 * d)
+        dp_dz[0] = 2 * dp_dz[1] - dp_dz[2]
+        dp_dz[-1] = 2 * dp_dz[-2] - dp_dz[-3]
+
+        return dp_dz
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -215,13 +222,13 @@ def Source(P, S):
     nu_m   = ng*Kel + alpha_B*wce + nu_ew                       # Electron momentum - transfer collision frequency
     mu_eff = (phy_const.e/(m*nu_m))*(1./(1 + (wce/nu_m)**2))    # Effective mobility
 
-    #DeltaG = Gamma_e / ni
-    #grdI = gradient(DeltaG, dz)
+    #div_u   = gradient(ve, d=Delta_x)               # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
+    div_p   = gradient(phy_const.e*ni*Te, d=Delta_x) # To be used with 5./2 and + div_p*ve in line 231
 
     S[0,:] = (-ng[:]*ni[:]*Kiz[:] + nu_iw[:]*ni[:])*M                                                      # Gas Density MARTIN: -ng[:]*ni[:]*Kiz[:] will be a constant
     S[1,:] = (ng[:]*ni[:]*Kiz[:] - nu_iw[:]*ni[:])*M                                                       # Ion Density
     S[2,:] = (ng[:]*ni[:]*Kiz[:]*VG - (phy_const.e/(mu_eff[:]*M))*ni[:]*ve[:] - nu_iw[:]*ni[:]*ui[:])*M    # Momentum
-    S[3,:] = -ng[:]*ni[:]*Kiz[:]*Eion*gamma_i*phy_const.e - nu_ew[:]*ni[:]*Ew*phy_const.e + 1./mu_eff[:]*(ni[:]*ve[:])**2./ni[:]*phy_const.e # - gradI_term*ni*Te*grdI          # Energy
+    S[3,:] = -ng[:]*ni[:]*Kiz[:]*Eion*gamma_i*phy_const.e - nu_ew[:]*ni[:]*Ew*phy_const.e + 1./mu_eff[:]*(ni[:]*ve[:])**2./ni[:]*phy_const.e + div_p*ve #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy
     
 # Compute the Current
 def compute_I(P): # MARTIN Check that this is consistent with the source term

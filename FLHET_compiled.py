@@ -42,7 +42,8 @@ import time as ttime
 
 tttime_start = ttime.time()
 
-configFile = sys.argv[1]
+# configFile = sys.argv[1]
+configFile = "configuration_Charoy.ini"
 config = configparser.ConfigParser()
 config.read(configFile)
 
@@ -66,8 +67,11 @@ alpha_B2 = float(
 )  # Anomalous transport
 mdot = float(physicalParameters["Mass flow"])  # Mass flow rate of propellant
 Te_Cath = float(
-    physicalParameters["Temperature Cathode"]
+    physicalParameters["e- Temperature Cathode"]
 )  # Electron temperature at the cathode
+TE0 = float(physicalParameters["Initial e- temperature"]) # Initial electron temperature at the cathode.
+NI0 = float(physicalParameters["Initial plasma density"]) # Initial plasma density.
+NG0 = float(physicalParameters["Initial neutrals density"]) # Initial neutrals density
 Rext = float(physicalParameters["Ballast resistor"])  # Resistor of the ballast
 V = float(physicalParameters["Voltage"])  # Potential difference
 Circuit = bool(
@@ -87,6 +91,17 @@ if MagneticFieldConfig["Type"] == "Default":
     LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
     LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
     saveBField = bool(MagneticFieldConfig["Save B-field"])
+
+
+# Ionization source term configuration
+IonizationConfig = config["Ionization configuration"]
+if IonizationConfig["Type"] == "SourceIsImposed":
+    print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
+
+    SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
+    LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
+    LSIZ2   = float(IonizationConfig["Position of 2nd S_iz zero"])  # Mag field at x=LX
+    assert(LSIZ2 >= LSIZ1)
 
 ##########################################################
 #           NUMERICAL PARAMETERS
@@ -185,7 +200,7 @@ if Circuit:
 #           Formulas defining our model                  #
 ##########################################################
 
-@njit
+#@njit
 def PrimToCons(P, U):
     U[0, :] = P[0, :] * M  # rhog
     U[1, :] = P[1, :] * M  # rhoi
@@ -193,7 +208,7 @@ def PrimToCons(P, U):
     U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]  # 3/2*ni*e*Te
 
 
-@njit
+#@njit
 def ConsToPrim(U, P, J=0.0):
     P[0, :] = U[0, :] / M  # ng
     P[1, :] = U[1, :] / M  # ni
@@ -202,7 +217,7 @@ def ConsToPrim(U, P, J=0.0):
     P[4, :] = P[2, :] - J / (A0 * phy_const.e * P[1, :])  # ve
 
 
-@njit
+#@njit
 def InviscidFlux(P, F):
     F[0, :] = P[0, :] * VG * M  # rho_g*v_g
     F[1, :] = P[1, :] * P[2, :] * M  # rho_i*v_i
@@ -212,7 +227,15 @@ def InviscidFlux(P, F):
     F[3, :] = 5.0 / 2.0 * P[1, :] * phy_const.e * P[3, :] * P[4, :]  # 5/2n_i*e*T_e*v_e
 
 
-@njit
+#@njit
+def GetImposedSiz(x_center):
+    xm = (LSIZ1 + LSIZ2)/2
+    Siz_arr = SIZMAX*np.cos(math.pi*(x_center - xm)/(LSIZ2 - LSIZ1))
+    Siz_arr = np.where((x_center < LSIZ1)|(x_center > LSIZ2), 0., Siz_arr)
+
+    return Siz_arr
+
+
 def Source(P, S):
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -223,7 +246,6 @@ def Source(P, S):
     Te = P[3, :]
     ve = P[4, :]
 
-    energy = 3.0 / 2.0 * ni * phy_const.e * Te  # Electron internal energy
     # Gamma_E = 3./2.*ni*phy_const.e*Te*ve    # Flux of internal energy
     wce = phy_const.e * B0 / m  # electron cyclotron frequency
 
@@ -234,20 +256,29 @@ def Source(P, S):
     gamma_i = 3  # Excitation coefficient
     # Estar   = 50    # Crossover energy
 
-    Kiz = (
-        1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
-    )  # Ion - neutral  collision rate          TODO: Replace by better
-    Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
+    Siz_arr = np.zeros(ng.shape, dtype=float) # the final unit of Siz_arr is m^(-3).s^(-1)
+    # Computing ionization source term:
+    if IonizationConfig["Type"] == 'Default':
+        Kiz = 1.8e-13*(((1.5*Te)/Eion)**0.25)*np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
+        Siz_arr = ng*ni*Kiz
+
+    elif IonizationConfig["Type"] == 'SourceIsImposed':
+        Siz_arr = GetImposedSiz(x_center)
+
+    Kel = 0.            # Electron - neutral  collision rate
+    # Kel value before I changed the code for Charoy's test cases.
+    #Kel = 2.5e-13
     sigma = 2.0 * Te / Estar  # SEE yield
     sigma[sigma > 0.986] = 0.986
-    nu_iw = (
-        (4.0 / 3.0) * (1.0 / (R2 - R1)) * np.sqrt(phy_const.e * Te / M)
-    )  # Ion - wall collision rate
-    # Limit the collisions to inside the thruster
-    index_LTHR = np.argmax(x_center > LTHR)
-    nu_iw[index_LTHR:] = 0.0
 
-    nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
+    nu_iw = np.zeros(Te.shape, dtype=float)                         # Ion - wall collision rate
+    # nu_iw value before Martin changed the code for Charoy's test cases.    
+    # nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/M)
+    #   Limit the collisions to inside the thruster
+    # index_LTHR = np.argmax(x_center > LTHR)
+    # nu_iw[index_LTHR:] = 0.0
+
+    nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate
 
     # TODO: Put decreasing wall collisions (Not needed for the moment)
     #    if decreasing_nu_iw:
@@ -264,7 +295,6 @@ def Source(P, S):
     phi_W = Te * np.log(np.sqrt(M / (2 * np.pi * m)) * (1 - sigma))  # Wall potential
     Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
 
-    c_s = np.sqrt(phy_const.e * Te / M)  # Sound velocity
     nu_m = (
         ng * Kel + alpha_B * wce + nu_ew
     )  # Electron momentum - transfer collision frequency
@@ -275,32 +305,23 @@ def Source(P, S):
     # DeltaG = Gamma_e / ni
     # grdI = gradient(DeltaG, dz)
 
-    S[0, :] = (-ng[:] * ni[:] * Kiz[:] + nu_iw[:] * ni[:]) * M  # Gas Density
-    S[1, :] = (ng[:] * ni[:] * Kiz[:] - nu_iw[:] * ni[:]) * M  # Ion Density
+    S[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * M  # Gas Density
+    S[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * M  # Ion Density
     S[2, :] = (
-        ng[:] * ni[:] * Kiz[:] * VG
+        Siz_arr * VG
         - (phy_const.e / (mu_eff[:] * M)) * ni[:] * ve[:]
         - nu_iw[:] * ni[:] * ui[:]
     ) * M  # Momentum
     S[3, :] = (
-        -ng[:] * ni[:] * Kiz[:] * Eion * gamma_i * phy_const.e
+        -Siz_arr * Eion * gamma_i * phy_const.e
         - nu_ew[:] * ni[:] * Ew * phy_const.e
         + 1.0 / mu_eff[:] * (ni[:] * ve[:]) ** 2.0 / ni[:] * phy_const.e
     )  # - gradI_term*ni*Te*grdI          # Energy
 
 
 # Compute the Current
-@njit
+#@njit
 def compute_I(P, V):
-    # def trapz(y, d):
-    #     return np.sum( (y[1:] + y[:-1]) )*d/2.0
-    # def gradient(y, d):
-    #     dp_dz = np.empty_like(y)
-    #     dp_dz[1:-1] = (y[2:] - y[:-2]) / (2 * d)
-    #     dp_dz[0] = 2 * dp_dz[1] - dp_dz[2]
-    #     dp_dz[-1] = 2 * dp_dz[-2] - dp_dz[-3]
-
-    #     return dp_dz
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
@@ -317,30 +338,25 @@ def compute_I(P, V):
     #############################
     #       Compute the rates   #
     #############################
-    Eion = 12.1  # Ionization energy
-    gamma_i = 3  # Excitation coefficient
-    # Estar   = 50    # Crossover energy
 
-    Kiz = (
-        1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
-    )  # Ion - neutral  collision rate          TODO: Replace by better
-    Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
+    Kel = 0.            # Electron - neutral  collision rate
+    # Kel value before I changed the code for Charoy's test cases.
+    #Kel = 2.5e-13
 
     sigma = 2.0 * Te / Estar  # SEE yield
     sigma[sigma > 0.986] = 0.986
 
-    nu_iw = (
-        (4.0 / 3.0) * (1.0 / (R2 - R1)) * np.sqrt(phy_const.e * Te / M)
-    )  # Ion - wall collision rate d
-    # Limit the collisions to inside the thruster
-    index_LTHR = np.argmax(x_center > LTHR)
-    nu_iw[index_LTHR:] = 0.0
+    nu_iw = np.zeros(Te.shape, dtype=float)                         # Ion - wall collision rate
+    # nu_iw value before Martin changed the code for Charoy's test cases.    
+    # nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/M)
+    #   Limit the collisions to inside the thruster
+    # index_LTHR = np.argmax(x_center > LTHR)
+    # nu_iw[index_LTHR:] = 0.0
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
 
-    nu_m = (
-        ng * Kel + alpha_B * wce + nu_ew
-    )  # Electron momentum - transfer collision frequency
+    # Electron momentum - transfer collision frequency
+    nu_m = ng * Kel + alpha_B * wce + nu_ew
 
     mu_eff = (phy_const.e / (m * nu_m)) * (
         1.0 / (1 + (wce / nu_m) ** 2)
@@ -373,7 +389,7 @@ def compute_I(P, V):
     return I0 * phy_const.e * A0
 
 
-@njit
+#@njit
 def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
 
     U_Bohm = np.sqrt(phy_const.e * P_In[3] / M)
@@ -393,7 +409,7 @@ def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
     P_ghost[4] = P_ghost[2] - J / (A0 * phy_const.e * P_ghost[1])  # ve
 
 
-@njit
+#@njit
 def SetOutlet(P_In, U_ghost, P_ghost, J=0.0):
 
     U_ghost[0] = P_In[0] * M
@@ -422,7 +438,7 @@ def computeMaxEigenVal_e(P):
     return np.maximum(np.abs(U_Bohm - P[4, :]) * 2, np.abs(U_Bohm + P[4, :]) * 2)
 
 
-@njit
+#@njit
 def computeMaxEigenVal_i(P):
 
     U_Bohm = np.sqrt(phy_const.e * P[3, :] / M)
@@ -431,7 +447,7 @@ def computeMaxEigenVal_i(P):
     return np.maximum(np.abs(U_Bohm - P[2, :]), np.abs(U_Bohm + P[2, :]))
 
 
-@njit
+#@njit
 def NumericalFlux(P, U, F_cell, F_interf):
 
     # Compute the max eigenvalue
@@ -458,7 +474,7 @@ def NumericalFlux(P, U, F_cell, F_interf):
     ) - 0.5 * lambda_max_e_12 * (U[3, 1 : NBPOINTS + 2] - U[3, 0 : NBPOINTS + 1])
 
 
-@njit
+#@njit
 def ComputeDelta_t(P):
     # Compute the max eigenvalue
     lambda_max_i_R = computeMaxEigenVal_i(P[:, 1 : NBPOINTS + 2])
@@ -481,6 +497,15 @@ def ComputeDelta_t(P):
 
 i_save = 0
 
+# delete current data in location:
+j_del = 0
+while os.path.exists(Results + "/Data/MacroscopicVars_" + f"{j_del:08d}" + ".pkl"):
+    filenametemp = Results + "/Data/MacroscopicVars_" + f"{j_del:08d}" + ".pkl"
+    os.remove(filenametemp)
+    j_del += 1
+if j_del > 0:
+    print("Warning: all MacroscopicVars_<i>.pkl files in the "+Results+" location were deleted to welcome new data.")
+
 
 def SaveResults(P, U, P_Inlet, P_Outlet, J, V, x_center, time, i_save):
     if not os.path.exists(Results):
@@ -495,8 +520,9 @@ def SaveResults(P, U, P_Inlet, P_Outlet, J, V, x_center, time, i_save):
     # Save the data
     filenameTemp = ResultsData + "/MacroscopicVars_" + f"{i_save:08d}" + ".pkl"
     pickle.dump(
-        [time, P, U, P_Inlet, P_Outlet, J, V, B0, x_center], open(filenameTemp, "wb")
+        [time, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center], open(filenameTemp, "wb")
     )  # TODO: Save the current and the electric field
+
 
 
 ##########################################################################################################
@@ -506,10 +532,23 @@ def SaveResults(P, U, P_Inlet, P_Outlet, J, V, x_center, time, i_save):
 #                                                                                                        #
 ##########################################################################################################
 
-NG0 = 5e18
-NI0 = 5e17
-TE0 = 5.0
+def SmoothInitialTemperature(bulk_array:np.ndarray, Toutlet:float)->np.ndarray:
+    """Return a smoothed version of the array bulkarray. It contains the bulk e-
+    initial temperature. It smoothes the possible jump between this bulk
+    value and the cathode e- temperature. Otherwise it would introduce a
+    harmful discontinuity. 
 
+    Args:
+        bulk_array (np.ndarray): array containg the initial bulk T_e.
+        Toutlet (float): value of T_e at the outlet. Usually the cathode T_e.
+    """
+    bulk_copy = np.copy(bulk_array)
+    nsmooth = NBPOINTS//10
+    for i in range(nsmooth):
+        a = (i+1)/(nsmooth+1)
+        bulk_copy[-1-i] = bulk_array[-1-i]*a + Toutlet*(1 - a)
+    
+    return bulk_copy
 
 time = 0.0
 iter = 0
@@ -520,16 +559,15 @@ P[0, :] *= mdot / (M * A0 * VG)  # Initial propellant density ng
 P[1, :] *= NI0  # Initial ni
 P[2, :] *= 0.0  # Initial vi
 P[3, :] *= TE0  # Initial Te
+P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
 P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
 
 # We initialize the conservative variables
 PrimToCons(P, U)
 
-
 ##########################################################################################
 #           Loop with Forward Euler                                                      #
 #           U^{n+1}_j = U^{n}_j - Dt/Dx(F^n_{j+1/2} - F^n_{j-1/2}) + Dt S^n_j            #
-#                                                                                        #
 ##########################################################################################
 
 if TIMESCHEME == "Forward Euler":
@@ -555,7 +593,7 @@ if TIMESCHEME == "Forward Euler":
 
         # Compute the convective Delta t
         Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1))
-
+        #print(Delta_t)
         # Compute the Numerical at the interfaces
         NumericalFlux(
             np.concatenate([P_Inlet, P, P_Outlet], axis=1),
@@ -575,6 +613,8 @@ if TIMESCHEME == "Forward Euler":
             * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
             + Delta_t * S[:, :]
         )
+        # Prevent the energy to be strictly negative
+        U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
         # Compute the current
         J = compute_I(P, V)

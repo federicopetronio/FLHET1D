@@ -302,8 +302,9 @@ def Source(P, S):
         1.0 / (1 + (wce / nu_m) ** 2)
     )  # Effective mobility
 
-    # DeltaG = Gamma_e / ni
-    # grdI = gradient(DeltaG, dz)
+    #div_u   = gradient(ve, d=Delta_x)               # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
+    #div_p = np.gradient(phy_const.e*ni*Te, d=Delta_x) # To be used with 5./2 and + div_p*ve in line 231    
+    div_p = np.zeros(Te.shape)
 
     S[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * M  # Gas Density
     S[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * M  # Ion Density
@@ -312,11 +313,12 @@ def Source(P, S):
         - (phy_const.e / (mu_eff[:] * M)) * ni[:] * ve[:]
         - nu_iw[:] * ni[:] * ui[:]
     ) * M  # Momentum
-    S[3, :] = (
-        -Siz_arr * Eion * gamma_i * phy_const.e
+    S[3,:] = (
+        - ng[:] * ni[:] * Kiz[:] * Eion * gamma_i * phy_const.e
         - nu_ew[:] * ni[:] * Ew * phy_const.e
-        + 1.0 / mu_eff[:] * (ni[:] * ve[:]) ** 2.0 / ni[:] * phy_const.e
-    )  # - gradI_term*ni*Te*grdI          # Energy
+        + 1./mu_eff[:]*(ni[:]*ve[:])**2./ni[:]*phy_const.e
+        + div_p*ve
+        ) #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy
 
 
 # Compute the Current

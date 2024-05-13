@@ -31,25 +31,67 @@ config.read(configFile)
 
 physicalParameters = config['Physical Parameters']
 
-VG       = float(physicalParameters['Gas velocity'])                 # Gas velocity
-M        = float(physicalParameters['Ion Mass'])*phy_const.m_u       # Ion Mass
-m        = phy_const.m_e                                             # Electron mass
-R1       = float(physicalParameters['Inner radius'])                 # Inner radius of the thruster
-R2       = float(physicalParameters['Outer radius'])                 # Outer radius of the thruster
-A0       = np.pi * (R2 ** 2 - R1 ** 2)                               # Area of the thruster
-LX       = float(physicalParameters['Length of axis'])               # length of Axis of the simulation
-LTHR     = float(physicalParameters['Length of thruster'])           # length of thruster (position of B_max)
+VG = float(physicalParameters["Gas velocity"])  # Gas velocity
+M = float(physicalParameters["Ion Mass"]) * phy_const.m_u  # Ion Mass
+m = phy_const.m_e  # Electron mass
+R1 = float(physicalParameters["Inner radius"])  # Inner radius of the thruster
+R2 = float(physicalParameters["Outer radius"])  # Outer radius of the thruster
+A0 = np.pi * (R2**2 - R1**2)  # Area of the thruster
+LX = float(physicalParameters["Length of axis"])  # length of Axis of the simulation
+LTHR = float(
+    physicalParameters["Length of thruster"]
+)  # length of thruster (position of B_max)
 alpha_B1 = float(
     physicalParameters["Anomalous transport alpha_B1"]
 )  # Anomalous transport
 alpha_B2 = float(
     physicalParameters["Anomalous transport alpha_B2"]
 )  # Anomalous transport
-mdot     = float(physicalParameters['Mass flow'])                    # Mass flow rate of propellant
-Te_Cath  = float(physicalParameters['e- Temperature Cathode'])          # Electron temperature at the cathode
-Rext     = float(physicalParameters['Ballast resistor'])             # Resistor of the ballast
-V0       = float(physicalParameters['Voltage'])                      # Potential difference
+mdot = float(physicalParameters["Mass flow"])  # Mass flow rate of propellant
+Te_Cath = float(
+    physicalParameters["e- Temperature Cathode"]
+)  # Electron temperature at the cathode
+TE0 = float(physicalParameters["Initial e- temperature"]) # Initial electron temperature at the cathode.
+NI0 = float(physicalParameters["Initial plasma density"]) # Initial plasma density.
+NG0 = float(physicalParameters["Initial neutrals density"]) # Initial neutrals density
+Rext = float(physicalParameters["Ballast resistor"])  # Resistor of the ballast
+V = float(physicalParameters["Voltage"])  # Potential difference
+Circuit = bool(
+    config.getboolean("Physical Parameters", "Circuit", fallback=False)
+)  # RLC Circuit
 
+
+# Magnetic field configuration
+MagneticFieldConfig = config["Magnetic field configuration"]
+
+if MagneticFieldConfig["Type"] == "Default":
+    print(MagneticFieldConfig["Type"] + " Magnetic Field")
+
+    BMAX = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
+    B0 = float(MagneticFieldConfig["B-field at 0"])  # Mag field at x=0
+    BLX = float(MagneticFieldConfig["B-field at LX"])  # Mag field at x=LX
+    LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
+    LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
+    saveBField = bool(MagneticFieldConfig["Save B-field"])
+
+
+# Ionization source term configuration
+IonizationConfig = config["Ionization configuration"]
+if IonizationConfig["Type"] == "SourceIsImposed":
+    print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
+SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
+LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
+LSIZ2   = float(IonizationConfig["Position of 2nd S_iz zero"])  # Mag field at x=LX
+assert(LSIZ2 >= LSIZ1)
+
+# Collisions parameters
+CollisionsConfig = config["Collisions"]
+KEL = float(CollisionsConfig["Elastic collisions reaction rate"])
+
+# Wall interactions
+WallInteractionConfig = config["Wall interactions"]
+ESTAR = float(WallInteractionConfig["Crossover energy"])  # Crossover energy
+assert((WallInteractionConfig["Type"] == "Default")|(WallInteractionConfig["Type"] == "None"))
 
 
 ##########################################################
@@ -108,6 +150,13 @@ CurrentDensity = np.zeros(np.shape(files)[0])
 Voltage = np.zeros(np.shape(files)[0])
 time    = np.zeros(np.shape(files)[0])
 
+def GetImposedSiz(x_center):
+    xm = (LSIZ1 + LSIZ2)/2
+    Siz = SIZMAX*np.cos(np.pi*(x_center - xm)/(LSIZ2 - LSIZ1))
+    Siz = np.where((x_center < LSIZ1)|(x_center > LSIZ2), 0., Siz)
+
+    return Siz
+
 
 def compute_E(P, Current):
     
@@ -129,26 +178,59 @@ def compute_E(P, Current):
     #############################
     #       Compute the rates   #
     #############################
-    Estar   = 50    # Crossover energy
+    Eion = 12.1  # Ionization energy
+    gamma_i = 3  # Excitation coefficient
+    # Estar   = 50    # Crossover energy
 
-    Kel = 0.     # Electron - neutral  collision rate     MARTIN: Check this
+    Siz_arr = np.zeros(ng.shape, dtype=float) # the final unit of Siz_arr is m^(-3).s^(-1)
+    # Computing ionization source term:
+    if IonizationConfig["Type"] == 'Default':
+        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
+        Siz_arr = ng*ni*Kiz
+    elif IonizationConfig["Type"] == 'SourceIsImposed':
+        Siz_arr = GetImposedSiz(x_center)
 
-    sigma = 2.*Te/Estar  # SEE yield
+    sigma = 2.0 * Te / ESTAR  # SEE yield
     sigma[sigma > 0.986] = 0.986
-
-    nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/M)       # Ion - wall collision rate
-    #Limit the collisions to inside the thruster
-    index_L0         = np.argmax(x_center > LX)
-    nu_iw[index_L0:] = 0.
+    if WallInteractionConfig["Type"] == "Default":
+        # nu_iw value before Martin changed the code for Charoy's test cases.    
+        nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/M)
+        # Limit the wall interactions to the inner channel
+        nu_iw[x_center > LTHR] = 0.0
+        nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
     
-    nu_ew   = nu_iw/(1 - sigma)                                      # Electron - wall collision rate
+    elif WallInteractionConfig["Type"] == "None":
+        nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
+        nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
 
-    nu_m    = ng*Kel + alpha_B*wce + nu_ew                          # Electron momentum - transfer collision frequency
+
+
+    # TODO: Put decreasing wall collisions (Not needed for the moment)
+    #    if decreasing_nu_iw:
+    #        index_L1 = np.argmax(z > L1)
+    #        index_LTHR = np.argmax(z > LTHR)
+    #        index_ind = index_L1 - index_LTHR + 1
+    #
+    #        nu_iw[index_LTHR: index_L1] = nu_iw[index_LTHR] * np.arange(index_ind, 1, -1) / index_ind
+    #        nu_iw[index_L1:] = 0.0
+
+    ##################################################
+    #       Compute the electron properties          #
+    ##################################################
+    phi_W = Te * np.log(np.sqrt(M/ (2 * np.pi * m)) * (1 - sigma))  # Wall potential
+    Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
+
+    nu_m = (
+        ng * KEL + alpha_B * wce + nu_ew
+        )  # Electron momentum - transfer collision frequency
     
-    mu_eff = (phy_const.e/(m*nu_m))*(1./(1 + (wce/nu_m)**2))       # Effective mobility
-    dp_dz  = np.gradient(ni*Te, Delta_x)
+    mu_eff = (phy_const.e / (m* nu_m)) * (
+        1.0 / (1 + (wce / nu_m) ** 2)
+        )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
 
     I0 = Current/(phy_const.e*A0)
+    dp_dz  = np.gradient(ni*Te, Delta_x)
+
     
     E = (I0 - Gamma_i) / (mu_eff * ni) - dp_dz / ni  # Discharge electric field
     return E
@@ -252,7 +334,7 @@ for i_save, file in enumerate(files):
         ax[2].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
-        ax[2].set_ylim([0., 2.0])
+        ax[2].set_ylim([0., .5])
 
         ax[3].plot(time*1000., Current, label='Eff. $I_d$')
         ax[3].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\Gamma_i - \Gamma_e)$')

@@ -43,30 +43,66 @@ config.read(configFile)
 
 physicalParameters = config['Physical Parameters']
 
-VG       = float(physicalParameters['Gas velocity'])                 # Gas velocity
-M        = float(physicalParameters['Ion Mass'])*phy_const.m_u       # Ion Mass
-m        = phy_const.m_e                                             # Electron mass
-R1       = float(physicalParameters['Inner radius'])                 # Inner radius of the thruster
-R2       = float(physicalParameters['Outer radius'])                 # Outer radius of the thruster
-A0       = np.pi * (R2 ** 2 - R1 ** 2)                               # Area of the thruster
-LENGTH   = float(physicalParameters['Length of axis'])               # length of Axis of the simulation
-L0       = float(physicalParameters['Length of thruster'])           # length of thruster (position of B_max)
-alpha_B  = float(physicalParameters['Anomalous transport alpha_B']) # Anomalous transport
-mdot     = float(physicalParameters['Mass flow'])                    # Mass flow rate of propellant
-Te_Cath  = float(physicalParameters['Temperature Cathode'])          # Electron temperature at the cathode
-Rext     = float(physicalParameters['Ballast resistor'])             # Resistor of the ballast
-V        = float(physicalParameters['Voltage'])                      # Potential difference
-Circuit  = bool(config.getboolean('Physical Parameters', 'Circuit', fallback=False)) # RLC Circuit
+VG = float(physicalParameters["Gas velocity"])  # Gas velocity
+Mi = float(physicalParameters["Ion Mass"]) * phy_const.m_u  # Ion Mass
+me = phy_const.m_e  # Electron mass
+R1 = float(physicalParameters["Inner radius"])  # Inner radius of the thruster
+R2 = float(physicalParameters["Outer radius"])  # Outer radius of the thruster
+A0 = np.pi * (R2**2 - R1**2)  # Area of the thruster
+LX = float(physicalParameters["Length of axis"])  # length of Axis of the simulation
+LTHR = float(
+    physicalParameters["Length of thruster"]
+)  # length of thruster (position of B_max)
+alpha_B1 = float(
+    physicalParameters["Anomalous transport alpha_B1"]
+)  # Anomalous transport
+alpha_B2 = float(
+    physicalParameters["Anomalous transport alpha_B2"]
+)  # Anomalous transport
+mdot = float(physicalParameters["Mass flow"])  # Mass flow rate of propellant
+Te_Cath = float(
+    physicalParameters["e- Temperature Cathode"]
+)  # Electron temperature at the cathode
+TE0 = float(physicalParameters["Initial e- temperature"]) # Initial electron temperature at the cathode.
+NI0 = float(physicalParameters["Initial plasma density"]) # Initial plasma density.
+NG0 = float(physicalParameters["Initial neutrals density"]) # Initial neutrals density
+Rext = float(physicalParameters["Ballast resistor"])  # Resistor of the ballast
+V = float(physicalParameters["Voltage"])  # Potential difference
+Circuit = bool(
+    config.getboolean("Physical Parameters", "Circuit", fallback=False)
+)  # RLC Circuit
 
 # Magnetic field configuration
 MagneticFieldConfig = config['Magnetic field configuration']
 
 if MagneticFieldConfig['Type'] == 'Default':
-    print(MagneticFieldConfig['Type'] + ' Magnetic Field')
-    
-    Bmax     = float(MagneticFieldConfig['Max B-field'])                  # Max Mag field
-    LB       = float(MagneticFieldConfig['Length B-field'])               # Length for magnetic field
-    saveBField = bool(MagneticFieldConfig['Save B-field'])
+    print(MagneticFieldConfig["Type"] + " Magnetic Field")
+
+    BMAX = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
+    B0 = float(MagneticFieldConfig["B-field at 0"])  # Mag field at x=0
+    BLX = float(MagneticFieldConfig["B-field at LX"])  # Mag field at x=LX
+    LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
+    LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
+    saveBField = bool(MagneticFieldConfig["Save B-field"])
+
+# Ionization source term configuration
+IonizationConfig = config["Ionization configuration"]
+if IonizationConfig["Type"] == "SourceIsImposed":
+    print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
+SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
+LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
+LSIZ2   = float(IonizationConfig["Position of 2nd S_iz zero"])  # Mag field at x=LX
+assert(LSIZ2 >= LSIZ1)
+
+# Collisions parameters
+CollisionsConfig = config["Collisions"]
+KEL = float(CollisionsConfig["Elastic collisions reaction rate"])
+
+# Wall interactions
+WallInteractionConfig = config["Wall interactions"]
+ESTAR = float(WallInteractionConfig["Crossover energy"])  # Crossover energy
+assert((WallInteractionConfig["Type"] == "Default")|(WallInteractionConfig["Type"] == "None"))
+
 
 ##########################################################
 #           NUMERICAL PARAMETERS
@@ -90,11 +126,27 @@ with open(Results+'/Configuration.cfg', 'w') as configfile:
 ##########################################################
 
 Delta_t  = 1.                                                   # Initialization of Delta_t (do not change)
-Delta_x  = LENGTH/NBPOINTS
+Delta_x  = LX/NBPOINTS
 
-x_mesh   = np.linspace(0, LENGTH, NBPOINTS + 1)                 # Mesh in the interface
-x_center = np.linspace(Delta_x, LENGTH - Delta_x, NBPOINTS)     # Mesh in the center of cell
-B0       = Bmax*np.exp(-((x_center - L0)/LB)**2.)               # Magnetic field
+x_mesh   = np.linspace(0, LX, NBPOINTS + 1)                 # Mesh in the interface
+x_center = np.linspace(Delta_x, LX - Delta_x, NBPOINTS)     # Mesh in the center of cell
+
+
+def GetImposedB(x_center):
+
+    a1 = (BMAX - B0)/(1 - np.exp(-LTHR**2/(2*LB1**2)))
+    a2 = (BMAX - BLX)/(1 - np.exp(-(LX - LTHR)**2/(2*LB2**2)))
+    b1 = BMAX - a1
+    b2 = BMAX - a2
+    Barr1 = a1*np.exp(-(x_center - LTHR)**2/(2*LB1**2)) + b1
+    Barr2 = a2*np.exp(-(x_center - LTHR)**2/(2*LB2**2)) + b2    # Magnetic field outside the thruster
+
+    Barr = np.where(x_center <= LTHR, Barr1, Barr2)
+
+    return Barr
+
+B0  =  GetImposedB(x_center)              # Magnetic field
+
 
 # Allocation of vectors
 P        = np.ones((5, NBPOINTS))                               # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
@@ -141,22 +193,22 @@ if Circuit:
 ##########################################################
 
 def PrimToCons(P, U):
-    U[0,:] = P[0,:]*M                                           # rhog
-    U[1,:] = P[1,:]*M                                           # rhoi
-    U[2,:] = P[2,:]*P[1,:]*M                                    # rhoiUi
+    U[0,:] = P[0,:]*Mi                                           # rhog
+    U[1,:] = P[1,:]*Mi                                           # rhoi
+    U[2,:] = P[2,:]*P[1,:]*Mi                                    # rhoiUi
     U[3,:] = 3./2.*P[1,:]*phy_const.e*P[3,:]                    # 3/2*ni*e*Te
     
 def ConsToPrim(U, P):
-    P[0,:] = U[0,:]/M                                           # ng
-    P[1,:] = U[1,:]/M                                           # ni
+    P[0,:] = U[0,:]/Mi                                           # ng
+    P[1,:] = U[1,:]/Mi                                           # ni
     P[2,:] = U[2,:]/U[1,:]                                      # Ui = rhoUi/rhoi
     P[3,:] = 2./3.*U[3,:]/(phy_const.e*P[1,:])                  # Te
     P[4,:] = P[2,:] - J/(A0*phy_const.e*P[1,:])                 # ve
 
 def InviscidFlux(P, F):
-    F[0,:] = P[0,:]*VG*M                                        # rho_g*v_g
-    F[1,:] = P[1,:]*P[2,:]*M                                    # rho_i*v_i
-    F[2,:] = M*P[1,:]*P[2,:]*P[2,:] + P[1,:]*phy_const.e*P[3,:] # M*n_i*v_i**2 + p_e
+    F[0,:] = P[0,:]*VG*Mi                                        # rho_g*v_g
+    F[1,:] = P[1,:]*P[2,:]*Mi                                    # rho_i*v_i
+    F[2,:] = Mi*P[1,:]*P[2,:]*P[2,:] + P[1,:]*phy_const.e*P[3,:] # M*n_i*v_i**2 + p_e
     F[3,:] = 5./2.*P[1,:]*phy_const.e*P[3,:]*P[4,:]             # 5/2n_i*e*T_e*v_e
     
 def Source(P, S):

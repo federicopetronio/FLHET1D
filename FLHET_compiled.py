@@ -266,6 +266,14 @@ def CompareIonizationTypes(x_center, P):
 
 
 def Source(P, S):
+
+    def gradient(y, d):
+        dp_dz = np.empty_like(y)
+        dp_dz[1:-1] = (y[2:] - y[:-2]) / (2 * d)
+        dp_dz[0] = 2 * dp_dz[1] - dp_dz[2]
+        dp_dz[-1] = 2 * dp_dz[-2] - dp_dz[-3]
+
+        return dp_dz
     #############################################################
     #       We give a name to the vars to make it more readable
     #############################################################
@@ -332,23 +340,38 @@ def Source(P, S):
         )  # Effective mobility
 
     #div_u   = gradient(ve, d=Delta_x)               # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
-    #div_p = np.gradient(phy_const.e*ni*Te, d=Delta_x) # To be used with 5./2 and + div_p*ve in line 231    
-    div_p = np.zeros(Te.shape)
+    div_p = gradient(phy_const.e*ni*Te, d=Delta_x) # To be used with 5./2 and + div_p*ve in line 231    
+    # div_p = np.zeros(Te.shape)
 
-    S[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * Mi # Gas Density
-    S[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * Mi # Ion Density
-    S[2, :] = (
-        Siz_arr * VG
-        - (phy_const.e / (mu_eff[:] * Mi)) * ni[:] * ve[:]
-        - nu_iw[:] * ni[:] * vi[:]
-        ) * Mi # Momentum
-    S[3,:] = (
-        - Siz_arr * Eion * gamma_i * phy_const.e
-        - nu_ew[:] * ni[:] * Ew * phy_const.e
-        + (1./mu_eff[:]) * ni[:] * ve[:]**2 * phy_const.e
+    if IonizationConfig["Type"] == 'Default':
+        S[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * Mi # Gas Density
+        S[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * Mi # Ion Density
+        S[2, :] = (
+            Siz_arr * VG
+            - (phy_const.e / (mu_eff[:] * Mi)) * ni[:] * ve[:]
+            - nu_iw[:] * ni[:] * vi[:]
+            ) * Mi # Momentum
+        S[3,:] = (
+            - Siz_arr * Eion * gamma_i * phy_const.e
+            - nu_ew[:] * ni[:] * Ew * phy_const.e
+            + (1./mu_eff[:]) * ni[:] * ve[:]**2 * phy_const.e
+            + div_p*ve
         )
-        #+ div_p*ve
         #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy in Joule
+    elif IonizationConfig["Type"] == 'SourceIsImposed':
+        S[0, :] = (-Siz_arr*0. + nu_iw[:] * ni[:]) * Mi # Gas Density
+        S[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * Mi # Ion Density
+        S[2, :] = (
+            - (phy_const.e / (mu_eff[:] * Mi)) * ni[:] * ve[:]
+            - nu_iw[:] * ni[:] * vi[:]
+            ) * Mi # Momentum
+        S[3,:] = (
+            3./2. * Siz_arr * phy_const.e * 10. # TODO
+            - nu_ew[:] * ni[:] * Ew * phy_const.e
+            + (1./mu_eff[:]) * ni[:] * ve[:]**2 * phy_const.e
+            + div_p*ve
+        )
+
 
 
 # Compute the Current
@@ -410,7 +433,6 @@ def compute_I(P, V):
     I0 = top / bottom  # Discharge current density
     return I0 * phy_const.e * A0
 
-
 #@njit
 def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
 
@@ -420,8 +442,11 @@ def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
         U_ghost[0] = (mdot - Mi* P_In[1] * P_In[2] / VG) / (A0 * VG)
     else:
         U_ghost[0] = mdot / (A0 * VG)
+    if IonizationConfig["Type"] == 'SourceIsImposed':
+        U_ghost[0] = mdot / (A0 * VG)
+    
     U_ghost[1] = P_In[1] * Mi
-    U_ghost[2] = -2.0 * P_In[1] * U_Bohm* Mi- P_In[1] * P_In[2] * Mi
+    U_ghost[2] = -2.0 * P_In[1] * U_Bohm* Mi - P_In[1] * P_In[2] * Mi
     U_ghost[3] = 3.0 / 2.0 * P_In[1] * phy_const.e * P_In[3]
 
     P_ghost[0] = U_ghost[0] / Mi # ng

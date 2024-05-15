@@ -159,9 +159,6 @@ def GetImposedSiz(x_center):
 
 
 def compute_E(P, Current):
-    
-    def trapz(y, d):
-        return np.sum( (y[1:] + y[:-1]) )*d/2.0
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
@@ -178,17 +175,6 @@ def compute_E(P, Current):
     #############################
     #       Compute the rates   #
     #############################
-    Eion = 12.1  # Ionization energy
-    gamma_i = 3  # Excitation coefficient
-    # Estar   = 50    # Crossover energy
-
-    Siz_arr = np.zeros(ng.shape, dtype=float) # the final unit of Siz_arr is m^(-3).s^(-1)
-    # Computing ionization source term:
-    if IonizationConfig["Type"] == 'Default':
-        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
-        Siz_arr = ng*ni*Kiz
-    elif IonizationConfig["Type"] == 'SourceIsImposed':
-        Siz_arr = GetImposedSiz(x_center)
 
     sigma = 2.0 * Te / ESTAR  # SEE yield
     sigma[sigma > 0.986] = 0.986
@@ -217,8 +203,6 @@ def compute_E(P, Current):
     ##################################################
     #       Compute the electron properties          #
     ##################################################
-    phi_W = Te * np.log(np.sqrt(M/ (2 * np.pi * m)) * (1 - sigma))  # Wall potential
-    Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
 
     nu_m = (
         ng * KEL + alpha_B * wce + nu_ew
@@ -244,10 +228,6 @@ def compute_phi(P, Current):
     phi = V - Current * Rext - cumtrapz(E, d=Delta_x)  # Discharge electrostatic potential
     return phi
 
-
-"""def compute_E(V):
-    return (-1)*np.gradient(V, Delta_x)
-"""
 
 #####################################
 #           Plot variables
@@ -334,7 +314,7 @@ for i_save, file in enumerate(files):
         ax[2].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
-        ax[2].set_ylim([0., .5])
+        ax[2].set_ylim([0., 2.0])
 
         ax[3].plot(time*1000., Current, label='Eff. $I_d$')
         ax[3].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\Gamma_i - \Gamma_e)$')
@@ -383,7 +363,7 @@ for i_save, file in enumerate(files):
         ax[7].set_xlabel('$x$ [cm]', fontsize=axisfontsize)
         ax[7].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax[7].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-        ax[7].set_ylim([0.,400.])
+        ax[7].set_ylim([0.,max(800.,j_of_x.max())])
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
 

@@ -173,6 +173,7 @@ U_Inlet = np.ones((4, 1))  # Ghost cell on the left
 P_Inlet = np.ones((5, 1))  # Ghost cell on the left
 U_Outlet = np.ones((4, 1))  # Ghost cell on the right
 P_Outlet = np.ones((5, 1))  # Ghost cell on the right
+
 if TIMESCHEME == "TVDRK3":
     P_1 = np.ones(
         (5, NBPOINTS)

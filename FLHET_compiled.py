@@ -33,8 +33,11 @@ import glob
 # The user can change the PHYSICAL PARAMETERS
 # or the NUMERICAL PARAMETERS
 #
-# TODO: Test with Thomas' benchmark, add circuit
+# TODO: Test with Thomas' benchmark
 #
+# This script FLHET_compiled.py has a few functions compiled with numba.
+# It is approximately 30% faster than its not compiled counterpart:
+# the LPP1D.py script.
 ##########################################################
 
 ##########################################################
@@ -149,7 +152,7 @@ Delta_t = 1.0  # Initialization of Delta_t (do not change)
 Delta_x = LX / NBPOINTS
 
 x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
-x_center = np.linspace(Delta_x, LX - Delta_x, NBPOINTS)  # Mesh in the center of cell
+x_center = np.linspace(0.5*Delta_x, LX - 0.5*Delta_x, NBPOINTS)  # Mesh in the center of cell
 Barr = GetImposedB(x_center)
 alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
 alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
@@ -208,7 +211,7 @@ if Circuit:
 #           Formulas defining our model                  #
 ##########################################################
 
-#@njit
+@njit
 def PrimToCons(P, U):
     U[0, :] = P[0, :] * Mi # rhog
     U[1, :] = P[1, :] * Mi # rhoi
@@ -216,7 +219,7 @@ def PrimToCons(P, U):
     U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]  # 3/2*ni*e*Te
 
 
-#@njit
+@njit
 def ConsToPrim(U, P, J=0.0):
     P[0, :] = U[0, :] / Mi # ng
     P[1, :] = U[1, :] / Mi # ni
@@ -225,7 +228,7 @@ def ConsToPrim(U, P, J=0.0):
     P[4, :] = P[2, :] - J / (A0 * phy_const.e * P[1, :])  # ve
 
 
-#@njit
+@njit
 def InviscidFlux(P, F):
     F[0, :] = P[0, :] * VG * Mi # rho_g*v_g
     F[1, :] = P[1, :] * P[2, :] * Mi # rho_i*v_i
@@ -235,7 +238,6 @@ def InviscidFlux(P, F):
     F[3, :] = 5.0 / 2.0 * P[1, :] * phy_const.e * P[3, :] * P[4, :]  # 5/2n_i*e*T_e*v_e
 
 
-#@njit
 def GetImposedSiz(x_center):
     xm = (LSIZ1 + LSIZ2)/2
     Siz = SIZMAX*np.cos(math.pi*(x_center - xm)/(LSIZ2 - LSIZ1))
@@ -263,6 +265,30 @@ def CompareIonizationTypes(x_center, P):
     plt.ylabel("$S_{iz}$ [m$^{-3}$.s$^{-1}$]", fontsize=14)
     plt.legend(fontsize=11)
     plt.show()
+
+
+def CumTrapz(y, d):
+    cuminteg = np.zeros(y.shape, dtype=float)
+    cuminteg[1:] = np.cumsum(d * (y[1:] + y[:-1]) / 2.0)
+    return cuminteg
+
+
+def InitNeutralDensity(x_center, P):
+    Eion = 12.1
+    ni = P[1,:]
+    Te = P[3,:]
+    if IonizationConfig['Type'] == 'SourceIsImposed':
+        Siz_arr = GetImposedSiz(x_center)
+        dx_temp = (x_center[-1] - x_center[0])/(x_center.shape[0] - 1)
+        ng_init = NG0 - (1/VG)*CumTrapz(Siz_arr, dx_temp)
+
+    elif IonizationConfig['Type'] == 'Default':
+        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))
+        ng_init = NG0*np.exp( - (1/VG) * ni * Kiz * x_center)    
+    else:
+        ng_init = np.full(x_center.shape, NG0)
+
+    return ng_init
 
 
 def Source(P, S):
@@ -375,7 +401,6 @@ def Source(P, S):
 
 
 # Compute the Current
-#@njit
 def compute_I(P, V):
 
     # TODO: This is already computed! Maybe move to the source
@@ -433,16 +458,18 @@ def compute_I(P, V):
     I0 = top / bottom  # Discharge current density
     return I0 * phy_const.e * A0
 
-#@njit
+
 def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
 
     U_Bohm = np.sqrt(phy_const.e * P_In[3] / Mi)
 
-    if P_In[1] * P_In[2] < 0.0:
-        U_ghost[0] = (mdot - Mi* P_In[1] * P_In[2] / VG) / (A0 * VG)
-    else:
-        U_ghost[0] = mdot / (A0 * VG)
-    if IonizationConfig["Type"] == 'SourceIsImposed':
+    if IonizationConfig["Type"] == 'Default':
+        if P_In[1] * P_In[2] < 0.0:
+            U_ghost[0] = (mdot - Mi* P_In[1] * P_In[2] * A0) / (A0 * VG)
+        else:
+            U_ghost[0] = mdot / (A0 * VG)
+
+    elif IonizationConfig["Type"] == 'SourceIsImposed':
         U_ghost[0] = mdot / (A0 * VG)
     
     U_ghost[1] = P_In[1] * Mi
@@ -456,7 +483,7 @@ def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
     P_ghost[4] = P_ghost[2] - J / (A0 * phy_const.e * P_ghost[1])  # ve
 
 
-#@njit
+@njit
 def SetOutlet(P_In, U_ghost, P_ghost, J=0.0):
 
     U_ghost[0] = P_In[0] * Mi
@@ -477,7 +504,7 @@ def SetOutlet(P_In, U_ghost, P_ghost, J=0.0):
 
 
 # TODO: These are vector. Better allocate them
-#njit
+@njit
 def computeMaxEigenVal_e(P):
 
     U_Bohm = np.sqrt(phy_const.e * P[3, :] / Mi)
@@ -485,7 +512,7 @@ def computeMaxEigenVal_e(P):
     return np.maximum(np.abs(U_Bohm - P[4, :]) * 2, np.abs(U_Bohm + P[4, :]) * 2)
 
 
-#njit
+@njit
 def computeMaxEigenVal_i(P):
 
     U_Bohm = np.sqrt(phy_const.e * P[3, :] / Mi)
@@ -494,7 +521,7 @@ def computeMaxEigenVal_i(P):
     return np.maximum(np.abs(U_Bohm - P[2, :]), np.abs(U_Bohm + P[2, :]))
 
 
-#@njit
+@njit
 def NumericalFlux(P, U, F_cell, F_interf):
 
     # Compute the max eigenvalue
@@ -521,7 +548,7 @@ def NumericalFlux(P, U, F_cell, F_interf):
     ) - 0.5 * lambda_max_e_12 * (U[3, 1 : NBPOINTS + 2] - U[3, 0 : NBPOINTS + 1])
 
 
-#@njit
+@njit
 def ComputeDelta_t(P):
     # Compute the max eigenvalue
     lambda_max_i_R = computeMaxEigenVal_i(P[:, 1 : NBPOINTS + 2])
@@ -600,12 +627,13 @@ iter = 0
 J = 0.0  # Initial Current
 
 # We initialize the primitive variables
-P[0, :] *= mdot / (Mi* A0 * VG)  # Initial propellant density ng
+ng_anode = mdot / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
 P[1, :] *= NI0  # Initial ni
 P[2, :] *= 0.0  # Initial vi
 P[3, :] *= TE0  # Initial Te
 P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
 P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
+P[0,:] = InitNeutralDensity(x_center, P) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
 
 # We initialize the conservative variables
 PrimToCons(P, U)
@@ -702,6 +730,8 @@ if TIMESCHEME == "TVDRK3":
         InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell)
         # Compute the convective Delta t (Only in the first step)
         Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1))
+        if iter == 0:
+            Delta_t = Delta_t/3
 
         # Compute the Numerical at the interfaces
         NumericalFlux(
@@ -722,6 +752,9 @@ if TIMESCHEME == "TVDRK3":
             * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
             + Delta_t * S[:, :]
         )
+        
+        # Prevent the energy to be strictly negative
+        U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
         # Compute the current
         J = compute_I(P, V)
@@ -773,6 +806,9 @@ if TIMESCHEME == "TVDRK3":
             )
         )
 
+        # Prevent the energy to be strictly negative
+        U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
+
         # Compute the current
         J = compute_I(P, V)
 
@@ -821,6 +857,10 @@ if TIMESCHEME == "TVDRK3":
                 + Delta_t * S[:, :]
             )
         )
+
+        # Prevent the energy to be strictly negative
+        U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
+
         # Compute the current
         J = compute_I(P, V)
 

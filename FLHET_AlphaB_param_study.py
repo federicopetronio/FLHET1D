@@ -528,19 +528,21 @@ def SmoothInitialTemperature(bulk_array:np.ndarray, Toutlet:float)->np.ndarray:
 
 if __name__ == '__main__':
     nalpha = 30
-    alpha_B1_arr = np.linspace(-6, -1, nalpha) # range of anomalous coeffs. in the channel
-    alpha_B2_arr = np.linspace(-6, -1, nalpha) # range of anomalous coeffs. in the channel
+    alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
     alpha_B1_arr = 10**alpha_B1_arr
     alpha_B2_arr = 10**alpha_B2_arr
 
     alpha_B1_mesh, alpha_B2_mesh = np.meshgrid(alpha_B1_arr, alpha_B2_arr)
+    
+    subResults = "./Results/2nd_alphaB_param_study"
 
-    np.savetxt('./Results/alphaB_param_study/alphaB1_mesh.csv', alpha_B1_mesh,  delimiter='\t')
-    np.savetxt('./Results/alphaB_param_study/alphaB2_mesh.csv', alpha_B2_mesh,  delimiter='\t')
+    np.savetxt(subResults + '/alphaB1_mesh.csv', alpha_B1_mesh, delimiter='\t')
+    np.savetxt(subResults + '/alphaB2_mesh.csv', alpha_B2_mesh, delimiter='\t')
 
     means_j = np.zeros(alpha_B1_mesh.shape, dtype=float)
 
-    with open("./Results/alphaB_param_study/Configuration.cfg", "w") as configfile:
+    with open(subResults+"/Configuration.cfg", "w") as configfile:
         config.write(configfile)
 
     for j in range(nalpha):
@@ -860,4 +862,4 @@ if __name__ == '__main__':
             print(f"i={i:3d} aB2={alpha_B2:.2e} ;\tj={j:3d} aB1={alpha_B1:.2e} ;\tJ={means_j[i, j]:.3e} A.m^{-2}\tt_comput={subttime_delta} s")
 
 
-    np.savetxt('./Results/alphaB_param_study/mean_j_array.csv', means_j,        delimiter='\t')
+    np.savetxt(subResults + '/mean_j_array.csv', means_j, delimiter='\t')

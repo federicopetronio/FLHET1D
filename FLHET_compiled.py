@@ -36,7 +36,7 @@ import glob
 # TODO: Test with Thomas' benchmark
 #
 # This script FLHET_compiled.py has a few functions compiled with numba.
-# It is approximately 30% faster than its not compiled counterpart:
+# It is approximately 2.3 times faster than its not compiled counterpart:
 # the LPP1D.py script.
 ##########################################################
 

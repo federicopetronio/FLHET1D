@@ -21,3 +21,5 @@
 test.py
 # ignore outputs directory
 Results/
+#ignore the PDF
+LPP1D_dl_20240328.pdf

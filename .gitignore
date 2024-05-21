@@ -23,3 +23,5 @@ test.py
 Results/
 #ignore the PDF
 LPP1D_dl_20240328.pdf
+# ignore the __pycache__ directory
+__pycache__

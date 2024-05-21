@@ -53,7 +53,6 @@ Te_Cath = float(
 )  # Electron temperature at the cathode
 TE0 = float(physicalParameters["Initial e- temperature"]) # Initial electron temperature at the cathode.
 NI0 = float(physicalParameters["Initial plasma density"]) # Initial plasma density.
-NG0 = float(physicalParameters["Initial neutrals density"]) # Initial neutrals density
 Rext = float(physicalParameters["Ballast resistor"])  # Resistor of the ballast
 V = float(physicalParameters["Voltage"])  # Potential difference
 Circuit = bool(

@@ -47,6 +47,7 @@ config.read(configFile)
 
 physicalParameters = config["Physical Parameters"]
 
+Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
 VG = float(physicalParameters["Gas velocity"])  # Gas velocity
 M = float(physicalParameters["Ion Mass"]) * phy_const.m_u  # Ion Mass
 m = phy_const.m_e  # Electron mass
@@ -110,23 +111,37 @@ Delta_t = 1.0  # Initialization of Delta_t (do not change)
 Delta_x = LENGTH / NBPOINTS
 
 x_mesh = np.linspace(0, LENGTH, NBPOINTS + 1)  # Mesh in the interface
-x_center = np.linspace(Delta_x, LENGTH - Delta_x, NBPOINTS)  # Mesh in the center of cell
-B0 = Bmax * np.exp(-(((x_center - L0) / LB1) ** 2.0))  # Magnetic field within the thruster
-B0 = np.where(x_center < L0, B0, Bmax * np.exp(-(((x_center - L0) / LB2) ** 2.0)))  # Magnetic field outside the thruster
-alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
-alpha_B = np.where(x_center < L0, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
+x_center = np.linspace(
+    Delta_x, LENGTH - Delta_x, NBPOINTS
+)  # Mesh in the center of cell
+B0 = Bmax * np.exp(
+    -(((x_center - L0) / LB1) ** 2.0)
+)  # Magnetic field within the thruster
+B0 = np.where(
+    x_center < L0, B0, Bmax * np.exp(-(((x_center - L0) / LB2) ** 2.0))
+)  # Magnetic field outside the thruster
+alpha_B = (
+    np.ones(NBPOINTS) * alpha_B1
+)  # Anomalous transport coefficient inside the thruster
+alpha_B = np.where(
+    x_center < L0, alpha_B, alpha_B2
+)  # Anomalous transport coefficient in the plume
 alpha_B_smooth = np.copy(alpha_B)
 
 # smooth between alpha_B1 and alpha_B2
 for index in range(10, NBPOINTS - 9):
-    alpha_B_smooth[index] = np.mean(alpha_B[index-10:index+10])
+    alpha_B_smooth[index] = np.mean(alpha_B[index - 10 : index + 10])
 alpha_B = alpha_B_smooth
 
 # Allocation of vectors
-P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
+P = np.ones(
+    (5, NBPOINTS)
+)  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
 U = np.ones((4, NBPOINTS))  # Conservative vars U = [rhog, rhoi, rhoUi, 3/2 ne*e*Te]
 S = np.ones((4, NBPOINTS))  # Source Term
-F_cell = np.ones((4, NBPOINTS + 2))  # Flux at the cell center. We include the Flux of the Ghost cells
+F_cell = np.ones(
+    (4, NBPOINTS + 2)
+)  # Flux at the cell center. We include the Flux of the Ghost cells
 F_interf = np.ones((4, NBPOINTS + 1))  # Flux at the interface
 U_Inlet = np.ones((4, 1))  # Ghost cell on the left
 P_Inlet = np.ones((5, 1))  # Ghost cell on the left
@@ -169,6 +184,12 @@ if Circuit:
 ##########################################################
 #           Formulas defining our model                  #
 ##########################################################
+
+
+@njit
+def test_positivity(var, varname):
+    if np.any(var < 0):
+        print("Negativity detected in ", varname)
 
 
 @njit
@@ -217,6 +238,9 @@ def Source(P, S):
     Te = P[3, :]
     ve = P[4, :]
 
+    # test_positivity(ng, "ng")
+    # test_positivity(ni, "ni")
+    # test_positivity(Te, "Te")
     energy = 3.0 / 2.0 * ni * phy_const.e * Te  # Electron internal energy
     # Gamma_E = 3./2.*ni*phy_const.e*Te*ve    # Flux of internal energy
     wce = phy_const.e * B0 / m  # electron cyclotron frequency
@@ -231,7 +255,6 @@ def Source(P, S):
     Kiz = (
         1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
     )  # Ion - neutral  collision rate          TODO: Replace by better
-    Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
     sigma = 2.0 * Te / Estar  # SEE yield
     sigma[sigma > 0.986] = 0.986
     nu_iw = (
@@ -258,7 +281,6 @@ def Source(P, S):
     phi_W = Te * np.log(np.sqrt(M / (2 * np.pi * m)) * (1 - sigma))  # Wall potential
     Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
 
-    c_s = np.sqrt(phy_const.e * Te / M)  # Sound velocity
     nu_m = (
         ng * Kel + alpha_B * wce + nu_ew
     )  # Electron momentum - transfer collision frequency
@@ -267,13 +289,14 @@ def Source(P, S):
     )  # Effective mobility
 
     # Compute the anomalous transport term
-    corr = -1e17 # 
-    Psi = 1/(B0 * ni) * corr / (1 + nu_m**2/wce**2)
-    Psi = np.where( x_center < L0, 0.0, Psi)
-    Psi = Psi * 0.
+    corr = -5e18 * np.ones(NBPOINTS) * 0  #
+    ni0 = 1e17
+    Psi = corr / (Bmax * ni0)
+    # Psi = np.where(x_center < L0, 0, Psi)
 
-    #div_u   = gradient(ve, d=Delta_x)               # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
-    div_p   = gradient(phy_const.e*ni*Te, d=Delta_x) # To be used with 5./2 and + div_p*ve in line 231
+    div_p = gradient(
+        phy_const.e * ni * Te, d=Delta_x
+    )  # To be used with 5./2 and + div_p*ve below
 
     S[0, :] = (-ng[:] * ni[:] * Kiz[:] + nu_iw[:] * ni[:]) * M  # Gas Density
     S[1, :] = (ng[:] * ni[:] * Kiz[:] - nu_iw[:] * ni[:]) * M  # Ion Density
@@ -282,7 +305,13 @@ def Source(P, S):
         - (phy_const.e / (mu_eff[:] * M)) * ni[:] * (ve[:] - Psi[:])
         - nu_iw[:] * ni[:] * ui[:]
     ) * M  # Momentum
-    S[3,:] = -ng[:]*ni[:]*Kiz[:]*Eion*gamma_i*phy_const.e - nu_ew[:]*ni[:]*Ew*phy_const.e + 1./mu_eff[:]*(ni[:]*ve[:])**2./ni[:]*phy_const.e + div_p*ve #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy
+    S[3, :] = (
+        -ng[:] * ni[:] * Kiz[:] * Eion * gamma_i * phy_const.e
+        - nu_ew[:] * ni[:] * Ew * phy_const.e
+        + ni[:] / mu_eff[:] * (ve[:] - Psi[:]) ** 2.0 * phy_const.e
+        + div_p * ve
+    )  # + phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy
+
 
 # Compute the Current
 @njit
@@ -309,17 +338,16 @@ def compute_I(P, V):
     Gamma_i = ni * ui
     wce = phy_const.e * B0 / m  # electron cyclotron frequency
 
+    # test_positivity(ng, "ng")
+    # test_positivity(ni, "ni")
+    # test_positivity(Te, "Te")
+
     #############################
     #       Compute the rates   #
     #############################
     Eion = 12.1  # Ionization energy
     gamma_i = 3  # Excitation coefficient
     # Estar   = 50    # Crossover energy
-
-    Kiz = (
-        1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
-    )  # Ion - neutral  collision rate          TODO: Replace by better
-    Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
 
     sigma = 2.0 * Te / Estar  # SEE yield
     sigma[sigma > 0.986] = 0.986
@@ -593,8 +621,7 @@ if TIMESCHEME == "TVDRK3":
                 "\t J = {:.4f} A".format(J),
                 "\t V = {:.4f} V".format(V),
             )
-            if iter == 5:
-                sys.exit(1)
+
         #################################################
         #           FIRST STEP RK3
         #################################################
@@ -757,7 +784,7 @@ if TIMESCHEME == "TVDRK3":
             # Change the Voltage
             V = V0 - X_Volt0[0]
         time += Delta_t
-        if (iter %SAVERATE) ==0:
+        if (iter % SAVERATE) == 0:
             filename = Results + "time_vec_njit.dat"
             ttime_intermediate = ttime.time()
             a_str = " ".join(map(str, [iter, ttime_intermediate - tttime_start]))
@@ -765,11 +792,11 @@ if TIMESCHEME == "TVDRK3":
                 os.remove(filename)
                 print("File removed:" + filename)
             if os.path.exists(filename):
-                with open(filename, 'a') as file:
+                with open(filename, "a") as file:
                     file.write(a_str)
                     file.write("\n")  # Add a newline at the end (optional)
             else:
-                with open(filename, 'w') as file:
+                with open(filename, "w") as file:
                     file.write(a_str)
                     file.write("\n")  # Add a newline at the end (optional)
         iter += 1

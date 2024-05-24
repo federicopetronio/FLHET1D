@@ -325,6 +325,7 @@ for i_save, file in enumerate(files):
         ax[3].yaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
         ax[3].xaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
         ax[3].legend(fontsize=tickfontsize)
+        ax[3].set_ylim([0., 10.0])
         
         ax_b=ax[4].twinx()
         ax[4].plot(x_center*100, P[3,:])

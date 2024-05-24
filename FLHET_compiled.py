@@ -257,6 +257,7 @@ def Source(fP, fS, fBarr, ionization_type:str, wall_inter_type:str,fx_center, fS
         + (1./mu_eff[:]) * ni[:] * ve[:]**2 * phy_const.e
         + div_p*ve
     )
+
     #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy in Joule
 
 
@@ -1380,11 +1381,11 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
 
 if __name__ == '__main__':
-    #main('configuration_Charoy.ini')
+    main('configuration_Charoy.ini')
 
-    nalpha = 10
-    alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
-    alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
-    alpha_B1_arr = 10**alpha_B1_arr
-    alpha_B2_arr = 10**alpha_B2_arr
-    main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)
+    #nalpha = 30
+    #alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    #alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    #alpha_B1_arr = 10**alpha_B1_arr
+    #alpha_B2_arr = 10**alpha_B2_arr
+    #main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)

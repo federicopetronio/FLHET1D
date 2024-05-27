@@ -11,6 +11,7 @@ import pickle
 import glob
 import sys
 import configparser
+from numba import njit
 
 
 
@@ -157,34 +158,46 @@ def GetImposedSiz(x_center):
     return Siz
 
 
-def compute_E(P, Current):
+@njit
+def gradient(y, d):
+    dp_dz = np.zeros(y.shape)
+    dp_dz[1:-1] = (y[2:] - y[:-2]) / (2 * d)
+    dp_dz[0] = 2 * dp_dz[1] - dp_dz[2]
+    dp_dz[-1] = 2 * dp_dz[-2] - dp_dz[-3]
+
+    return dp_dz
+
+
+@njit
+def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fDelta_x, fJ):
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
     #       We give a name to the vars to make it more readable
     #############################################################
-    ng = P[0,:]
-    ni = P[1,:]
-    ui = P[2,:]
-    Te = P[3,:]
-    ve = P[4,:]
+    ng = fP[0,:]
+    ni = fP[1,:]
+    ui = fP[2,:]
+    Te = fP[3,:]
+    ve = fP[4,:]
     Gamma_i = ni*ui
-    wce     = phy_const.e*B/m              # electron cyclotron frequency
+    me = phy_const.m_e
+    wce     = phy_const.e*fB/me   # electron cyclotron frequency
     
     #############################
     #       Compute the rates   #
     #############################
 
-    sigma = 2.0 * Te / ESTAR  # SEE yield
+    sigma = 2.0 * Te / fESTAR  # SEE yield
     sigma[sigma > 0.986] = 0.986
-    if WallInteractionConfig["Type"] == "Default":
+    if wall_inter_type == "Default":
         # nu_iw value before Martin changed the code for Charoy's test cases.    
-        nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/M)
+        nu_iw = (4./3.)*(1./(fR2 - fR1))*np.sqrt(phy_const.e*Te/fM)
         # Limit the wall interactions to the inner channel
-        nu_iw[x_center > LTHR] = 0.0
+        nu_iw[fx_center > fLTHR] = 0.0
         nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
     
-    elif WallInteractionConfig["Type"] == "None":
+    elif wall_inter_type == "None":
         nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
         nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
 
@@ -204,27 +217,37 @@ def compute_E(P, Current):
     ##################################################
 
     nu_m = (
-        ng * KEL + alpha_B * wce + nu_ew
+        ng * fKEL + falpha_B * wce + nu_ew
         )  # Electron momentum - transfer collision frequency
     
-    mu_eff = (phy_const.e / (m* nu_m)) * (
+    mu_eff = (phy_const.e / (me* nu_m)) * (
         1.0 / (1 + (wce / nu_m) ** 2)
         )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
 
-    I0 = Current/(phy_const.e*A0)
-    dp_dz  = np.gradient(ni*Te, Delta_x)
+    I0 = fJ/(phy_const.e*A0)
+    dp_dz  = gradient(ni*Te, fDelta_x)
 
     
     E = (I0 - Gamma_i) / (mu_eff * ni) - dp_dz / ni  # Discharge electric field
     return E
 
 
-def compute_phi(P, Current):
-    def cumtrapz(y, d):
-        return np.concatenate((np.zeros(1), np.cumsum(d * (y[1:] + y[:-1]) / 2.0)))
+@njit
+def cumTrapz(y, d):
+    n = y.shape[0]
+    cuminteg = np.zeros(y.shape, dtype=float)
     
-    E   = compute_E(P, J)
-    phi = V - Current * Rext - cumtrapz(E, d=Delta_x)  # Discharge electrostatic potential
+    for i in range(1, n):
+        cuminteg[i] = cuminteg[i-1] + d * (y[i] + y[i-1]) / 2.0
+
+    return cuminteg
+
+
+@njit
+def compute_phi(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fDelta_x, fJ, fV, fRext):
+    
+    E   = compute_E(fP, fB, fESTAR, wall_inter_type, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fDelta_x, fJ)
+    phi = fV - fJ * fRext - cumTrapz(E, Delta_x)  # Discharge electrostatic potential
     return phi
 
 
@@ -267,8 +290,8 @@ for i_save, file in enumerate(files):
         [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
 
     if PLOT_VARS:
-        E = compute_E(P, J)
-        phi = compute_phi(P, J)
+        E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B, Delta_x, J)
+        phi = compute_phi(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B, Delta_x, J, V, Rext)
         
         f = plt.figure(figsize = (12,9))
 

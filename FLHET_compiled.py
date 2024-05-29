@@ -172,6 +172,33 @@ def gradient(y, d):
     return dp_dz
 
 
+#@njit
+def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center, fLTHR, fKEL, falpha_B):
+    
+    ng = fP[0, :]
+    Te = fP[3, :]
+
+    wce = phy_const.e*fBarr/phy_const.m_e
+
+    sigma = 2.0 * Te / fESTAR  # SEE yield
+    sigma[sigma > 0.986] = 0.986
+
+    if wall_inter_type == "Default":
+        # nu_iw value before Martin changed the code for Charoy's test cases.    
+        nu_iw = (4./3.)*(1./(fR2 - fR1))*np.sqrt(phy_const.e*Te/fMi)
+        # Limit the wall interactions to the inner channel
+        nu_iw[fx_center > fLTHR] = 0.0
+        nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate            
+    elif wall_inter_type == "None":
+        nu_iw = np.zeros(fP.shape[1], dtype=float)     # Ion - wall collision rate
+        nu_ew = np.zeros(fP.shape[1], dtype=float)     # Electron - wall collision rate
+
+    nu_m = ng*fKEL + falpha_B*wce + nu_ew
+    mu_eff_arr = (phy_const.e/(phy_const.m_e * nu_m * (1 + (wce/nu_m)**2)))
+
+    return mu_eff_arr
+
+
 @njit
 def Source(fP, fS, fBarr, ionization_type:str, wall_inter_type:str,fx_center, fSIZMAX, fLSIZ1, fLSIZ2, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
 
@@ -244,7 +271,9 @@ def Source(fP, fS, fBarr, ionization_type:str, wall_inter_type:str,fx_center, fS
     div_p = gradient(phy_const.e*ni*Te, fDelta_x) # To be used with 5./2 and + div_p*ve in line 231    
     # div_p = np.zeros(Te.shape)
 
-    fS[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * fMi # Gas Density
+    #fS[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * fMi # Gas Density
+    ### Warning currently in the code, neutrals dynamic is canceled.
+    fS[0, :] = 0.
     fS[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * fMi # Ion Density
     fS[2, :] = (
         Siz_arr * fVG
@@ -587,6 +616,8 @@ def main(fconfigFile):
         alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
     alpha_B = alpha_B_smooth
 
+
+
     # Allocation of vectors
     P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
     U = np.ones((4, NBPOINTS))  # Conservative vars U = [rhog, rhoi, rhoUi, 3/2 ne*e*Te]
@@ -651,7 +682,16 @@ def main(fconfigFile):
     P[3, :] *= TE0  # Initial Te
     P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
     P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
-    P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+    #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+    ### Warning, in the code currently, neutrals dyanmic is canceled.
+    P[0,:] = ng_anode
+
+    # compue mu to check whether or not similitude B scaling works.
+    mu_eff_arr = compute_mu(P, Barr, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+    print(f"Checking mu value [m^2 s^-1 V^-1]. Bmax = {BMAX*10000:.0f}\talpha_B1 = {alpha_B1:.4e}\talpha_B2 = {alpha_B2:.4e}")
+    print(mu_eff_arr)
+    print(np.mean(mu_eff_arr))
+    print(np.std(mu_eff_arr))
 
     # We initialize the conservative variables
     PrimToCons(P, U, Mi)

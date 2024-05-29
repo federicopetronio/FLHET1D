@@ -336,7 +336,7 @@ for i_save, file in enumerate(files):
         ax[2].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
-        ax[2].set_ylim([0., 2.0])
+        ax[2].set_ylim([0., max(1.0, np.max(P[1,:]/1e18))])
 
         ax[3].plot(time*1000., Current, label='Eff. $I_d$')
         ax[3].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\Gamma_i - \Gamma_e)$')

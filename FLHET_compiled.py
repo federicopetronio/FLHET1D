@@ -686,12 +686,12 @@ def main(fconfigFile):
     ### Warning, in the code currently, neutrals dyanmic is canceled.
     P[0,:] = ng_anode
 
-    # compue mu to check whether or not similitude B scaling works.
+    # compute mu to check whether or not similitude B scaling works.
     mu_eff_arr = compute_mu(P, Barr, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
     print(f"Checking mu value [m^2 s^-1 V^-1]. Bmax = {BMAX*10000:.0f}\talpha_B1 = {alpha_B1:.4e}\talpha_B2 = {alpha_B2:.4e}")
-    print(mu_eff_arr)
-    print(np.mean(mu_eff_arr))
-    print(np.std(mu_eff_arr))
+    #print(mu_eff_arr)
+    print(f"\tMean value over domain space  {np.mean(mu_eff_arr):.6e}")
+    print(f"\tStd deviation:                {np.std(mu_eff_arr):.6e}")
 
     # We initialize the conservative variables
     PrimToCons(P, U, Mi)

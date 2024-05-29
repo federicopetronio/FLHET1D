@@ -348,7 +348,7 @@ for i_save, file in enumerate(files):
         ax[3].yaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
         ax[3].xaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
         ax[3].legend(fontsize=tickfontsize)
-        ax[3].set_ylim([0., 10.0])
+        ax[3].set_ylim([0., max(10.0, 1.1*Current.max())])
         
         ax_b=ax[4].twinx()
         ax[4].plot(x_center*100, P[3,:])
@@ -386,7 +386,7 @@ for i_save, file in enumerate(files):
         ax[7].set_xlabel('$x$ [cm]', fontsize=axisfontsize)
         ax[7].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax[7].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-        ax[7].set_ylim([0.,max(800.,j_of_x.max())])
+        ax[7].set_ylim([0.,max(800., 1.1*j_of_x.max())])
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
 

@@ -21,7 +21,8 @@
 test.py
 # ignore outputs directory
 Results/
-#ignore the PDF
+#ignore the PDFs
 LPP1D_dl_20240328.pdf
+LPP1D_dl_20240613.pdf
 # ignore the __pycache__ directory
 __pycache__

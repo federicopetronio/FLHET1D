@@ -120,12 +120,12 @@ def CompareIonizationTypes(fx_center, fP, fSIZMAX, fLSIZ1, fLSIZ2):
 
 
 @njit
-def CumTrapz(y, d):
+def cumTrapz(y, x):
     n = y.shape[0]
     cuminteg = np.zeros(y.shape, dtype=float)
     
     for i in range(1, n):
-        cuminteg[i] = cuminteg[i-1] + d * (y[i] + y[i-1]) / 2.0
+        cuminteg[i] = cuminteg[i-1] + (x[i] - x[i-1]) * (y[i] + y[i-1]) / 2.0
 
     return cuminteg
 
@@ -150,7 +150,7 @@ def InitNeutralDensity(fx_center, fng_cathode, fVG, fP, ionization_type:str, fSI
     if ionization_type == 'SourceIsImposed':
         Siz_arr = GetImposedSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
         dx_temp = (fx_center[-1] - fx_center[0])/(fx_center.shape[0] - 1)
-        ng_init = fng_cathode - (1/fVG)*CumTrapz(Siz_arr, dx_temp)
+        ng_init = fng_cathode - (1/fVG)*cumTrapz(Siz_arr, dx_temp)
         #ng_init = fng_cathode - (1/fVG)*IntegralSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
 
     elif ionization_type == 'Default':
@@ -781,7 +781,6 @@ def main(fconfigFile):
     TIMEFINAL = float(NumericsConfig["Final time"])  # Last time of simulation
     Results = NumericsConfig["Result dir"]  # Name of result directory
     TIMESCHEME = NumericsConfig["Time integration"]  # Time integration scheme
-    TIMESCHEME = NumericsConfig["Time integration"]  # Time integration scheme
     IMPlICIT   = bool(
         config.getboolean("Numerical Parameteres", "Implicit heat flux", fallback=False) ) # Time integration scheme for heat flux equation
     MESHREFINEMENT =  bool(
@@ -800,7 +799,6 @@ def main(fconfigFile):
     ##########################################################
 
     Delta_t = 1.0  # Initialization of Delta_t (do not change)
-    Delta_x = LX / NBPOINTS
 
     x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
     if MESHREFINEMENT:
@@ -966,7 +964,20 @@ def main(fconfigFile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
+
+            if HEATFLUX and IMPlICIT ==  False:
+                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                Delta_t = min(dt_HF, Delta_t)
+
+            # First half step of strang-splitting
+            elif HEATFLUX and IMPlICIT ==  True:
+                dt_HF = Delta_t
+                P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+            if iter == 0:
+                Delta_t = Delta_t/3
 
             # Update the solution
             U[:, :] = (
@@ -1033,17 +1044,18 @@ def main(fconfigFile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                Delta_t = min(dt_HF, Delta_t)
+
             # First half step of strang-splitting
-            if HEATFLUX and IMPlICIT ==  True:
+            elif HEATFLUX and IMPlICIT ==  True:
                 dt_HF = Delta_t
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
-            Delta_t = min(dt_HF, Delta_t)
             if iter == 0:
                 Delta_t = Delta_t/3
 
@@ -1097,7 +1109,7 @@ def main(fconfigFile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
@@ -1153,7 +1165,7 @@ def main(fconfigFile):
                 VG
             )
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
@@ -1447,7 +1459,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
                     # Update the solution
                     U[:, :] = (
@@ -1505,7 +1517,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
                     # Update the solution
                     U[:, :] = (
@@ -1557,7 +1569,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
                     # Update the solution
                     U[:, :] = (
@@ -1611,7 +1623,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         VG
                     )
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
                     # Update the solution
                     U[:, :] = (

@@ -59,7 +59,9 @@ V = float(physicalParameters["Voltage"])  # Potential difference
 Circuit = bool(
     config.getboolean("Physical Parameters", "Circuit", fallback=False)
 )  # RLC Circuit
-
+HEATFLUX = bool(
+    config.getboolean("Physical Parameters", "Electron heat flux", fallback=False)
+)
 
 # Magnetic field configuration
 MagneticFieldConfig = config["Magnetic field configuration"]
@@ -105,8 +107,50 @@ CFL       = float(NumericsConfig['CFL'])                        # Nondimensional
 TIMEFINAL = float(NumericsConfig['Final time'])                 # Last time of simulation
 Results   = NumericsConfig['Result dir']                        # Name of result directory
 TIMESCHEME = NumericsConfig['Time integration']                        # Name of result directory
+IMPlICIT   = bool(
+    config.getboolean("Numerical Parameteres", "Implicit heat flux", fallback=False) ) # Time integration scheme for heat flux equation
+MESHREFINEMENT =  bool(
+    config.getboolean("Numerical Parameteres", "Mesh refinement", fallback=False) )
+if MESHREFINEMENT:
+    MESHLEVELS = int(NumericsConfig["Mesh levels"])
+    REFINEMENTLENGTH = float(NumericsConfig["Refinement length"])
 
-Delta_x  = LX/NBPOINTS
+if not os.path.exists(Results):
+    os.makedirs(Results)
+with open(Results + "/Configuration.cfg", "w") as configfile:
+    config.write(configfile)
+
+    x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
+    if MESHREFINEMENT:
+        # get the point below the refinement length
+        Dx_notRefined = x_mesh[1]
+        #First level
+        i_refinement = int(np.floor(REFINEMENTLENGTH/Dx_notRefined))
+        mesh_level_im1 = np.linspace(0, x_mesh[i_refinement], i_refinement*2 + 1)
+        mesh_refinedim1 = np.concatenate((mesh_level_im1[:-1], x_mesh[i_refinement:]))
+        # plt.plot(x_mesh, np.zeros_like(x_mesh), linestyle='None', marker='o', markersize=2)
+        # plt.plot(mesh_refinedim1, np.ones_like(mesh_refinedim1), linestyle='None', marker='o', markersize=2)
+
+        #Secondand rest of levels level
+        if MESHLEVELS > 1:
+            for i_level in range(2, MESHLEVELS + 1):
+                i_refinement_level   = int((np.shape(mesh_level_im1)[0] - 1)/2)
+                mesh_level_i         = np.linspace(0, mesh_level_im1[i_refinement_level], i_refinement_level*2 + 1)
+                mesh_refined_level_i = np.concatenate((mesh_level_i[:-1], mesh_refinedim1[i_refinement_level:]))
+
+                mesh_level_im1      = mesh_level_i
+                mesh_refinedim1     = mesh_refined_level_i
+                # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
+            x_mesh = np.copy(mesh_refined_level_i)
+
+    x_center = (x_mesh[1:] + x_mesh[:-1])/2
+    Delta_x  =  x_mesh[1:] - x_mesh[:-1]
+    NBPOINTS = np.shape(x_center)[0]
+    # We create an array that also include the position of the ghost cells
+    x_center_extended = np.insert(x_center, 0, -x_center[0])
+    x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
+    Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
+    Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])
 
 
 # creates the array resulting 2 regions alpha_B
@@ -134,9 +178,9 @@ def GetImposedSiz(x_center):
 
 
 @njit
-def gradient(y, d):
+def gradient(y, x):
     dp_dz = np.zeros(y.shape)
-    dp_dz[1:-1] = (y[2:] - y[:-2]) / (2 * d)
+    dp_dz[1:-1] = (y[2:] - y[:-2]) / (x[2:] - x[:-2])
     dp_dz[0] = 2 * dp_dz[1] - dp_dz[2]
     dp_dz[-1] = 2 * dp_dz[-2] - dp_dz[-3]
 
@@ -184,7 +228,7 @@ def compute_Rei_empirical(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_
     return Rei_emp
 
 
-def compute_Rei_saturated(fP, fM):
+def compute_Rei_saturated(fP, fM, fx_center):
     #############################################################
     #       We give a name to the vars to make it more readable
     #############################################################
@@ -193,7 +237,7 @@ def compute_Rei_saturated(fP, fM):
     Te = fP[3,:]
     uB = np.sqrt(phy_const.e*Te / fM) # Bohm velocity or sound speed.
 
-    deriv_factor = gradient(vi*ni*Te, Delta_x)
+    deriv_factor = gradient(vi*ni*Te, fx_center)
 
     Rei_saturated = -(phy_const.e/(16 * np.sqrt(6) * uB)) * np.abs(deriv_factor)
 
@@ -201,7 +245,7 @@ def compute_Rei_saturated(fP, fM):
 
 
 @njit
-def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fDelta_x, fJ):
+def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fJ):
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
@@ -257,7 +301,7 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
         )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
 
     I0 = fJ/(phy_const.e*A0)
-    dp_dz  = gradient(ni*Te, fDelta_x)
+    dp_dz  = gradient(ni*Te, fx_center)
 
     
     E = (I0 - Gamma_i) / (mu_eff * ni) - dp_dz / ni  # Discharge electric field
@@ -265,21 +309,20 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
 
 
 @njit
-def cumTrapz(y, d):
+def cumTrapz(y, x):
     n = y.shape[0]
     cuminteg = np.zeros(y.shape, dtype=float)
     
     for i in range(1, n):
-        cuminteg[i] = cuminteg[i-1] + d * (y[i] + y[i-1]) / 2.0
+        cuminteg[i] = cuminteg[i-1] + (x[i] - x[i-1]) * (y[i] + y[i-1]) / 2.0
 
     return cuminteg
 
 
 @njit
-def compute_phi(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fDelta_x, fJ, fV, fRext):
+def compute_phi(fV, fJ, fRext, fE, fx_center):
     
-    E   = compute_E(fP, fB, fESTAR, wall_inter_type, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fDelta_x, fJ)
-    phi = fV - fJ * fRext - cumTrapz(E, Delta_x)  # Discharge electrostatic potential
+    phi = fV - fJ * fRext - cumTrapz(fE, fx_center)  # Discharge electrostatic potential
     return phi
 
 
@@ -324,7 +367,7 @@ for i_save, file in enumerate(files):
     
     # Save the current
     Current[i_save] = J
-    CurrentDensity[i_save] = np.mean(P[1,:]*phy_const.e*(P[2,:] - P[4,:]))
+    CurrentDensity[i_save] = (1/LX)*np.trapz(P[1,:]*phy_const.e*(P[2,:] - P[4,:]), x_center)
     Voltage[i_save] = V
     time[i_save]    = t
 
@@ -353,8 +396,8 @@ for i_save, file in enumerate(files):
         [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
 
     if PLOT_VARS:
-        E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B, Delta_x, J)
-        phi = compute_phi(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B, Delta_x, J, V, Rext)
+        E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B, J)
+        phi = compute_phi(V, J, Rext, E, x_center)
         
         Rei_emp = compute_Rei_empirical(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B)
 

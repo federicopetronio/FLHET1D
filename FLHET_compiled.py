@@ -1403,7 +1403,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     means_j = np.zeros(alpha_B1_mesh.shape, dtype=float)
 
     for j in range(nalphaB1):
-        for i in range(j, nalphaB2):
+        for i in range(nalphaB2):
             alpha_B1 = falpha_B1_arr[j]
             alpha_B2 = falpha_B2_arr[i]
 

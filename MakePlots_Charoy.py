@@ -19,6 +19,7 @@ from numba import njit
 #           POST-PROC PARAMETERS
 ##########################################################
 Results     = sys.argv[1]
+#Results     = "./Results/test_heat_flux_N100" # debug mode
 PLOT_VARS   = True
 ResultConfig = Results+'/Configuration.cfg'
 
@@ -101,7 +102,7 @@ assert((WallInteractionConfig["Type"] == "Default")|(WallInteractionConfig["Type
 ##########################################################
 NumericsConfig = config['Numerical Parameteres']
 
-NBPOINTS  = int(NumericsConfig['Number of points'])             # Number of cells
+NBPOINTS_INIT  = int(NumericsConfig['Number of points'])             # Number of cells
 SAVERATE  = int(NumericsConfig['Save rate'])                    # Rate at which we store the data
 CFL       = float(NumericsConfig['CFL'])                        # Nondimensional size of the time step
 TIMEFINAL = float(NumericsConfig['Final time'])                 # Last time of simulation
@@ -120,48 +121,48 @@ if not os.path.exists(Results):
 with open(Results + "/Configuration.cfg", "w") as configfile:
     config.write(configfile)
 
-    x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
-    if MESHREFINEMENT:
-        # get the point below the refinement length
-        Dx_notRefined = x_mesh[1]
-        #First level
-        i_refinement = int(np.floor(REFINEMENTLENGTH/Dx_notRefined))
-        mesh_level_im1 = np.linspace(0, x_mesh[i_refinement], i_refinement*2 + 1)
-        mesh_refinedim1 = np.concatenate((mesh_level_im1[:-1], x_mesh[i_refinement:]))
-        # plt.plot(x_mesh, np.zeros_like(x_mesh), linestyle='None', marker='o', markersize=2)
-        # plt.plot(mesh_refinedim1, np.ones_like(mesh_refinedim1), linestyle='None', marker='o', markersize=2)
+x_mesh = np.linspace(0., LX, NBPOINTS_INIT + 1)  # Mesh in the interface
+if MESHREFINEMENT:
+    # get the point below the refinement length
+    Dx_notRefined = x_mesh[1]
+    #First level
+    i_refinement = int(np.floor(REFINEMENTLENGTH/Dx_notRefined))
+    mesh_level_im1 = np.linspace(0, x_mesh[i_refinement], i_refinement*2 + 1)
+    mesh_refinedim1 = np.concatenate((mesh_level_im1[:-1], x_mesh[i_refinement:]))
+    # plt.plot(x_mesh, np.zeros_like(x_mesh), linestyle='None', marker='o', markersize=2)
+    # plt.plot(mesh_refinedim1, np.ones_like(mesh_refinedim1), linestyle='None', marker='o', markersize=2)
 
-        #Secondand rest of levels level
-        if MESHLEVELS > 1:
-            for i_level in range(2, MESHLEVELS + 1):
-                i_refinement_level   = int((np.shape(mesh_level_im1)[0] - 1)/2)
-                mesh_level_i         = np.linspace(0, mesh_level_im1[i_refinement_level], i_refinement_level*2 + 1)
-                mesh_refined_level_i = np.concatenate((mesh_level_i[:-1], mesh_refinedim1[i_refinement_level:]))
+    #Secondand rest of levels level
+    if MESHLEVELS > 1:
+        for i_level in range(2, MESHLEVELS + 1):
+            i_refinement_level   = int((np.shape(mesh_level_im1)[0] - 1)/2)
+            mesh_level_i         = np.linspace(0, mesh_level_im1[i_refinement_level], i_refinement_level*2 + 1)
+            mesh_refined_level_i = np.concatenate((mesh_level_i[:-1], mesh_refinedim1[i_refinement_level:]))
 
-                mesh_level_im1      = mesh_level_i
-                mesh_refinedim1     = mesh_refined_level_i
-                # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
-            x_mesh = np.copy(mesh_refined_level_i)
+            mesh_level_im1      = mesh_level_i
+            mesh_refinedim1     = mesh_refined_level_i
+            # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
+    x_mesh = np.copy(mesh_refinedim1)
 
-    x_center = (x_mesh[1:] + x_mesh[:-1])/2
-    Delta_x  =  x_mesh[1:] - x_mesh[:-1]
-    NBPOINTS = np.shape(x_center)[0]
-    # We create an array that also include the position of the ghost cells
-    x_center_extended = np.insert(x_center, 0, -x_center[0])
-    x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
-    Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
-    Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])
+x_center = (x_mesh[1:] + x_mesh[:-1])/2
+Delta_x  =  x_mesh[1:] - x_mesh[:-1]
+NBPOINTS = np.shape(x_center)[0]
+# We create an array that also include the position of the ghost cells
+x_center_extended = np.insert(x_center, 0, -x_center[0])
+x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
+Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
+Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])
 
 
 # creates the array resulting 2 regions alpha_B
-x_center = np.linspace(Delta_x, LX - Delta_x, NBPOINTS)  # Mesh in the center of cell
 alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
 alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
 alpha_B_smooth = np.copy(alpha_B)
 
 # smooth between alpha_B1 and alpha_B2
-for index in range(10, NBPOINTS - 9):
-    alpha_B_smooth[index] = np.mean(alpha_B[index-10:index+10])
+nsmooth_o2 = NBPOINTS_INIT//10
+for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2-1)):
+    alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
 alpha_B = alpha_B_smooth
 
 
@@ -187,6 +188,7 @@ def gradient(y, x):
     return dp_dz
 
 
+@njit
 def compute_Rei_empirical(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B):
     
     #############################################################
@@ -198,7 +200,7 @@ def compute_Rei_empirical(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_
     ve = fP[4,:]
 
     me = phy_const.m_e
-    wce     = phy_const.e*fB/me   # electron cyclotron frequency
+    wce= phy_const.e*fB/me   # electron cyclotron frequency
     
     #############################
     #       Compute the rates   #
@@ -228,6 +230,7 @@ def compute_Rei_empirical(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_
     return Rei_emp
 
 
+@njit
 def compute_Rei_saturated(fP, fM, fx_center):
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -400,9 +403,11 @@ for i_save, file in enumerate(files):
         phi = compute_phi(V, J, Rext, E, x_center)
         
         Rei_emp = compute_Rei_empirical(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B)
+        #print(Rei_emp.shape)
 
-        Rei_sat = compute_Rei_saturated(P, M)
-
+        Rei_sat = compute_Rei_saturated(P, M, x_center)
+        #print(Rei_sat.shape)
+        
         f = plt.figure(figsize = (12,12.5))
 
         ax1 = plt.subplot2grid((5,2),(0,0))

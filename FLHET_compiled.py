@@ -346,7 +346,7 @@ def heatFlux(fP, fS, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2
 
     nu_m = (
         ng * fKEL + falpha_B * wce + nu_ew
-    )  # 
+    )
 
     kappa = 5./2. * ni * phy_const.e**2 * Te / (phy_const.m_e * nu_m)
     kappa_perp = kappa/(1 + (wce / nu_m) ** 2)
@@ -484,7 +484,7 @@ def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1
 
 # Compute the Current
 @njit
-def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext):
+def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fA0, fRext):
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
@@ -494,7 +494,6 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
     ni = fP[1, :]
     vi = fP[2, :]
     Te = fP[3, :]
-    ve = fP[4, :]
 
     me = phy_const.m_e
     wce = phy_const.e * fBarr / me # electron cyclotron frequency
@@ -525,7 +524,7 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
         1.0 / (1 + (wce / nu_m) ** 2)
     )  # Effective mobility
 
-    dp_dz = gradient(ni*Te, fDelta_x)
+    dp_dz = gradient(ni*Te, fx_center)
 
     value_trapz_1 = np.trapz(vi / mu_eff + dp_dz / ni, fx_center)
     
@@ -647,6 +646,13 @@ def ComputeDelta_t(fP, fNBPOINTS, fMi, fCFL, fDelta_x):
     Delta_t = fCFL * min(fDelta_x / np.maximum(lambda_max_e_12[:-1],  lambda_max_i_12[:-1]))
     return Delta_t
 
+
+@njit
+def worth_continue_parametric_study(I_nm1, I_n, deltat_n):
+    
+    deriv = (I_n - I_nm1)/deltat_n
+    
+    return (abs(deriv) > 1000.0)|(I_n > 0.01)
 
 ##########################################################################################
 #                                                                                        #
@@ -775,7 +781,7 @@ def main(fconfigFile):
     ##########################################################
     NumericsConfig = config["Numerical Parameteres"]
 
-    NBPOINTS = int(NumericsConfig["Number of points"])  # Number of cells
+    NBPOINTS_INIT = int(NumericsConfig["Number of points"])  # Number of cells
     SAVERATE = int(NumericsConfig["Save rate"])  # Rate at which we store the data
     CFL = float(NumericsConfig["CFL"])  # Nondimensional size of the time step
     TIMEFINAL = float(NumericsConfig["Final time"])  # Last time of simulation
@@ -800,7 +806,7 @@ def main(fconfigFile):
 
     Delta_t = 1.0  # Initialization of Delta_t (do not change)
 
-    x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
+    x_mesh = np.linspace(0, LX, NBPOINTS_INIT + 1)  # Mesh in the interface
     if MESHREFINEMENT:
         # get the point below the refinement length
         Dx_notRefined = x_mesh[1]
@@ -821,7 +827,7 @@ def main(fconfigFile):
                 mesh_level_im1      = mesh_level_i
                 mesh_refinedim1     = mesh_refined_level_i
                 # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
-            x_mesh = np.copy(mesh_refined_level_i)
+        x_mesh = np.copy(mesh_refinedim1)
 
     x_center = (x_mesh[1:] + x_mesh[:-1])/2
     Delta_x  =  x_mesh[1:] - x_mesh[:-1]
@@ -838,7 +844,7 @@ def main(fconfigFile):
     alpha_B_smooth = np.copy(alpha_B)
 
     # smooth between alpha_B1 and alpha_B2
-    nsmooth_o2 = NBPOINTS//10
+    nsmooth_o2 = NBPOINTS_INIT//10
     for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2-1)):
         alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
     alpha_B = alpha_B_smooth
@@ -929,7 +935,7 @@ def main(fconfigFile):
     ##########################################################################################
 
     if TIMESCHEME == "Forward Euler":
-        J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+        J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
         while time < TIMEFINAL:
             # Save results
             if (iter % SAVERATE) == 0:
@@ -938,8 +944,10 @@ def main(fconfigFile):
                 print(
                     "Iter = ",
                     iter,
-                    "\tTime = {:.2f}~µs".format(time / 1e-6),
-                    "\tJ = {:.4f}~A".format(J),
+                    "\tTime = {:.2f} µs".format(time / 1e-6),
+                    "\tI = {:.4f} A".format(J),
+                    "\tJ = {:.2e} A/m^2".format(J/A0),
+                    "\tV = {:.4f} V".format(V)
                 )
 
             # Set the boundaries
@@ -966,12 +974,12 @@ def main(fconfigFile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and (IMPlICIT ==  False):
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
 
             # First half step of strang-splitting
-            elif HEATFLUX and IMPlICIT ==  True:
+            elif HEATFLUX and (IMPlICIT ==  True):
                 dt_HF = Delta_t
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
@@ -991,7 +999,7 @@ def main(fconfigFile):
             U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
             # Compute the current
-            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)
@@ -1008,9 +1016,10 @@ def main(fconfigFile):
                 i_save += 1
                 print(
                     "Iter = {}".format(iter),
-                    "\t Time = {:.4f} µs".format(time * 1e6),
-                    "\t J = {:.4f} A".format(J),
-                    "\t V = {:.4f} V".format(V),
+                    "\tTime = {:.4f} µs".format(time * 1e6),
+                    "\tI = {:.4f} A".format(J),
+                    "\tJ = {:.2e}A/m^2".format(J/A0),
+                    "\tV = {:.4f} V".format(V),
                 )
                 #CompareIonizationTypes(x_center, P)
 
@@ -1021,7 +1030,7 @@ def main(fconfigFile):
             # Copy the solution to store it
             U_1[:, :] = U[:, :]
             ConsToPrim(U_1, P_1, Mi, A0, J)
-            J_1 = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J_1 = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
             ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
             # Set the boundaries
@@ -1072,7 +1081,7 @@ def main(fconfigFile):
             U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
             # Compute the current
-            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)
@@ -1110,7 +1119,7 @@ def main(fconfigFile):
 
             # Compute the source in the center of the cell
             Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and (IMPlICIT ==  False):
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
             # Update the solution
@@ -1130,7 +1139,7 @@ def main(fconfigFile):
             U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
             # Compute the current
-            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)
@@ -1166,7 +1175,7 @@ def main(fconfigFile):
             )
             # Compute the source in the center of the cell
             Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and (IMPlICIT ==  False):
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
             # Update the solution
@@ -1183,7 +1192,7 @@ def main(fconfigFile):
                 )
             )
             # Second half step of strang-splitting
-            if HEATFLUX and IMPlICIT ==  True:
+            if HEATFLUX and (IMPlICIT ==  True):
                 SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 3)
                 SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
@@ -1193,7 +1202,7 @@ def main(fconfigFile):
             U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
             # Compute the current
-            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)
@@ -1239,9 +1248,10 @@ def main(fconfigFile):
     i_save += 1
     print(
         "Iter = {}".format(iter),
-        "\t Time = {:.4f} µs".format(time * 1e6),
-        "\t J = {:.4f} A".format(J),
-        "\t V = {:.4f} V".format(V),
+        "\tTime = {:.4f} µs".format(time * 1e6),
+        "\tI = {:.4f} A".format(J),
+        "\tJ = {:.2e} A/m^2".format(J/A0),
+        "\tV = {:.4f} V".format(V)
     ) # Saves the last frame
 
     ttime_end = ttime.time()
@@ -1258,6 +1268,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
     VG = float(physicalParameters["Gas velocity"])  # Gas velocity
     Mi = float(physicalParameters["Ion Mass"]) * phy_const.m_u  # Ion Mass
+    me = phy_const.m_e  # Electron mass
     R1 = float(physicalParameters["Inner radius"])  # Inner radius of the thruster
     R2 = float(physicalParameters["Outer radius"])  # Outer radius of the thruster
     A0 = np.pi * (R2**2 - R1**2)  # Area of the thruster
@@ -1265,6 +1276,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     LTHR = float(
         physicalParameters["Length of thruster"]
     )  # length of thruster (position of B_max)
+
     MDOT = float(physicalParameters["Mass flow"])  # Mass flow rate of propellant
     Te_Cath = float(
         physicalParameters["e- Temperature Cathode"]
@@ -1277,7 +1289,9 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     Circuit = bool(
         config.getboolean("Physical Parameters", "Circuit", fallback=False)
     )  # RLC Circuit
-
+    HEATFLUX = bool(
+        config.getboolean("Physical Parameters", "Electron heat flux", fallback=False)
+    )
 
     # Magnetic field configuration
     MagneticFieldConfig = config["Magnetic field configuration"]
@@ -1316,11 +1330,18 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     ##########################################################
     NumericsConfig = config["Numerical Parameteres"]
 
-    NBPOINTS = int(NumericsConfig["Number of points"])  # Number of cells
+    NBPOINTS_INIT = int(NumericsConfig["Number of points"])  # Number of cells
     CFL = float(NumericsConfig["CFL"])  # Nondimensional size of the time step
     TIMEFINAL = float(NumericsConfig["Final time"])  # Last time of simulation
     Results = NumericsConfig["Result dir"]  # Name of result directory
     TIMESCHEME = NumericsConfig["Time integration"]  # Time integration scheme
+    IMPlICIT   = bool(
+        config.getboolean("Numerical Parameteres", "Implicit heat flux", fallback=False) ) # Time integration scheme for heat flux equation
+    MESHREFINEMENT =  bool(
+        config.getboolean("Numerical Parameteres", "Mesh refinement", fallback=False) )
+    if MESHREFINEMENT:
+        MESHLEVELS = int(NumericsConfig["Mesh levels"])
+        REFINEMENTLENGTH = float(NumericsConfig["Refinement length"])
 
     if not os.path.exists(Results):
         os.makedirs(Results)
@@ -1328,15 +1349,49 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
         config.write(configfile)
 
     ##########################################################
-    #           Global Variables and array                   #
+    #           Allocation of large vectors                  #
     ##########################################################
 
     Delta_t = 1.0  # Initialization of Delta_t (do not change)
-    Delta_x = LX / NBPOINTS
 
-    x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
-    x_center = np.linspace(0.5*Delta_x, LX - 0.5*Delta_x, NBPOINTS)  # Mesh in the center of cell
+    x_mesh = np.linspace(0, LX, NBPOINTS_INIT + 1)  # Mesh in the interface
+    if MESHREFINEMENT:
+        # get the point below the refinement length
+        Dx_notRefined = x_mesh[1]
+        #First level
+        i_refinement = int(np.floor(REFINEMENTLENGTH/Dx_notRefined))
+        mesh_level_im1 = np.linspace(0, x_mesh[i_refinement], i_refinement*2 + 1)
+        mesh_refinedim1 = np.concatenate((mesh_level_im1[:-1], x_mesh[i_refinement:]))
+        # plt.plot(x_mesh, np.zeros_like(x_mesh), linestyle='None', marker='o', markersize=2)
+        # plt.plot(mesh_refinedim1, np.ones_like(mesh_refinedim1), linestyle='None', marker='o', markersize=2)
+
+        #Secondand rest of levels level
+        if MESHLEVELS > 1:
+            for i_level in range(2, MESHLEVELS + 1):
+                i_refinement_level   = int((np.shape(mesh_level_im1)[0] - 1)/2)
+                mesh_level_i         = np.linspace(0, mesh_level_im1[i_refinement_level], i_refinement_level*2 + 1)
+                mesh_refined_level_i = np.concatenate((mesh_level_i[:-1], mesh_refinedim1[i_refinement_level:]))
+
+                mesh_level_im1      = mesh_level_i
+                mesh_refinedim1     = mesh_refined_level_i
+                # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
+        x_mesh = np.copy(mesh_refinedim1)
+
+    x_center = (x_mesh[1:] + x_mesh[:-1])/2
+    Delta_x  =  x_mesh[1:] - x_mesh[:-1]
+    NBPOINTS = np.shape(x_center)[0]
+    # We create an array that also include the position of the ghost cells
+    x_center_extended = np.insert(x_center, 0, -x_center[0])
+    x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
+    Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
+    Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])
+
     Barr = GetImposedB(x_center, BMAX, B0, BLX, LX, LTHR, LB1, LB2)
+
+    ##########################################################
+    #           Global Variables and array                   #
+    ##########################################################
+
 
     nalphaB1 = falpha_B1_arr.shape[0]
     nalphaB2 = falpha_B2_arr.shape[0]
@@ -1355,18 +1410,17 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
             print(f"i={i:3d} aB2={alpha_B2:.4e} ;\tj={j:3d} aB1={alpha_B1:.4e} ;\tRunning...", end='\r')
             subttime_start = ttime.time()
 
-
             alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
             alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
             alpha_B_smooth = np.copy(alpha_B)
 
             # smooth between alpha_B1 and alpha_B2
-            nsmooth_o2 = NBPOINTS//10
+            nsmooth_o2 = NBPOINTS_INIT//10
             for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2-1)):
                 alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
             alpha_B = alpha_B_smooth
 
-            Delta_t = 1.0  # Initialization of Delta_t (do not change)
+
 
             # Allocation of vectors
             P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
@@ -1423,7 +1477,9 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
             P[3, :] *= TE0  # Initial Te
             P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
             P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
-            P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+            #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+            ### Warning, in the code currently, neutrals dyanmic is canceled.
+            P[0,:] = ng_anode
 
             # We initialize the conservative variables
             PrimToCons(P, U, Mi)
@@ -1433,9 +1489,13 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
             #           U^{n+1}_j = U^{n}_j - Dt/Dx(F^n_{j+1/2} - F^n_{j-1/2}) + Dt S^n_j            #
             ##########################################################################################
 
+            # keep track of the previous current value. That will determine if the parametric study keeps on.
+            Jm1 = 0.0
+            ItsWorthKeepGoing = True
+
             if TIMESCHEME == "Forward Euler":
-                J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
-                while time < TIMEFINAL:
+                J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
+                while time < TIMEFINAL and ItsWorthKeepGoing:
 
                     # Set the boundaries
                     SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 1)
@@ -1461,6 +1521,19 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
+                    if HEATFLUX and (IMPlICIT ==  False):
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        Delta_t = min(dt_HF, Delta_t)
+
+                    # First half step of strang-splitting
+                    elif HEATFLUX and (IMPlICIT ==  True):
+                        dt_HF = Delta_t
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                        U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+                    if iter == 0:
+                        Delta_t = Delta_t/3
+
                     # Update the solution
                     U[:, :] = (
                         U[:, :]
@@ -1473,7 +1546,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
                     # Compute the current
-                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
                     # Compute the primitive vars for next step
                     ConsToPrim(U, P, Mi, A0, J)
@@ -1481,9 +1554,13 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     time += Delta_t
                     iter += 1
 
+                    # Change the variable and test if it is worth keep going.
+                    ItsWorthKeepGoing = worth_continue_parametric_study(Jm1, J, Delta_t)
+                    Jm1 = J
+
             if TIMESCHEME == "TVDRK3":
 
-                while time < TIMEFINAL:
+                while time < TIMEFINAL and ItsWorthKeepGoing:
 
                     #################################################
                     #           FIRST STEP RK3
@@ -1492,7 +1569,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Copy the solution to store it
                     U_1[:, :] = U[:, :]
                     ConsToPrim(U_1, P_1, Mi, A0, J)
-                    J_1 = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+                    J_1 = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
                     ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
                     # Set the boundaries
@@ -1502,8 +1579,6 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
                     # Compute the convective Delta t (Only in the first step)
                     Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
-                    if iter == 0:
-                        Delta_t = Delta_t/3
 
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
@@ -1519,6 +1594,19 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
 
+                    if HEATFLUX and IMPlICIT ==  False:
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        Delta_t = min(dt_HF, Delta_t)
+
+                    # First half step of strang-splitting
+                    elif HEATFLUX and IMPlICIT ==  True:
+                        dt_HF = Delta_t
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                        U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+                    if iter == 0:
+                        Delta_t = Delta_t/3
+
                     # Update the solution
                     U[:, :] = (
                         U[:, :]
@@ -1532,7 +1620,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
                     # Compute the current
-                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
                     # Compute the primitive vars for next step
                     ConsToPrim(U, P, Mi, A0, J)
@@ -1570,6 +1658,8 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
+                    if HEATFLUX and (IMPlICIT ==  False):
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
                     # Update the solution
                     U[:, :] = (
@@ -1588,7 +1678,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
                     # Compute the current
-                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
                     # Compute the primitive vars for next step
                     ConsToPrim(U, P, Mi, A0, J)
@@ -1624,6 +1714,8 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG)
+                    if HEATFLUX and (IMPlICIT ==  False):
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
                     # Update the solution
                     U[:, :] = (
@@ -1638,12 +1730,18 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                             + Delta_t * S[:, :]
                         )
                     )
+                    # Second half step of strang-splitting
+                    if HEATFLUX and (IMPlICIT ==  True):
+                        SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 3)
+                        SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
+                        U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
                     # Prevent the energy to be strictly negative
                     U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
                     # Compute the current
-                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+                    J = compute_I(P, V, Barr, WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
 
                     # Compute the primitive vars for next step
                     ConsToPrim(U, P, Mi, A0, J)
@@ -1667,26 +1765,31 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                         # Change the Voltage
                         V = V0 - X_Volt0[0]
-                    
                     time += Delta_t
 
                     iter += 1
+
+                    # Change the variable and test if it is worth keep going.
+                    ItsWorthKeepGoing = worth_continue_parametric_study(Jm1, J, Delta_t)
+                    Jm1 = J
 
             j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
             means_j[i, j] = np.mean(j_of_x)
             subttime_end = ttime.time()
             subttime_delta = int(subttime_end - subttime_start)
             print(f"i={i:3d} aB2={alpha_B2:.4e} ;\tj={j:3d} aB1={alpha_B1:.4e} ;\tJ={means_j[i, j]:.3e} A.m^{-2}\tt_comput={subttime_delta} s")
+            if time < TIMEFINAL:
+                print("\tUserWarning: the iteration was interrupted early bc I and dI/dt were under specified threshold.")
 
     np.savetxt(Results + '/mean_j_array.csv', means_j, delimiter='\t')
 
 
 if __name__ == '__main__':
-    main('configuration_Charoy.ini')
+    #main('configuration_Charoy.ini')
 
-    #nalpha = 30
-    #alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
-    #alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
-    #alpha_B1_arr = 10**alpha_B1_arr
-    #alpha_B2_arr = 10**alpha_B2_arr
-    #main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)
+    nalpha = 30
+    alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    alpha_B1_arr = 10**alpha_B1_arr
+    alpha_B2_arr = 10**alpha_B2_arr
+    main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)

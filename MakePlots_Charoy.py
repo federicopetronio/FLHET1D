@@ -160,9 +160,9 @@ alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport co
 alpha_B_smooth = np.copy(alpha_B)
 
 # smooth between alpha_B1 and alpha_B2
-nsmooth_o2 = NBPOINTS_INIT//10
-for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2-1)):
-    alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
+nsmooth_o2 = 2*(NBPOINTS_INIT//20) - 1 # odd number representig ~ 10 % of the domain. So the following lines will achieve a centered average on the ith point.
+for index in range(nsmooth_o2//2, NBPOINTS - nsmooth_o2//2):
+    alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2//2 : index + nsmooth_o2//2 + 1])
 alpha_B = alpha_B_smooth
 
 
@@ -518,7 +518,7 @@ for i_save, file in enumerate(files):
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
 
-        title = 'time = '+ str(round(t/1e-6, 4))+'$\mu$s'
+        title = 'time = '+ str(round(t/1e-6, 4))+'$\\mu$s'
         f.suptitle(title)
 
         for axis in ax:

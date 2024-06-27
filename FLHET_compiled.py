@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import scipy.constants as phy_const
+from scipy import interpolate
 import matplotlib.pyplot as plt
 import os
 import pandas as pd
@@ -546,6 +547,75 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
 
 
 #@njit
+def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B):
+
+    # TODO: This is already computed! Maybe move to the source
+    #############################################################
+    #       We give a name to the vars to make it more readable
+    #############################################################
+    ng = fP[0,:]
+    ni = fP[1,:]
+    Te = fP[3,:]
+    ve = fP[4,:]
+
+    me = phy_const.m_e
+    wce     = phy_const.e*fB/me   # electron cyclotron frequency
+    
+    #############################
+    #       Compute the rates   #
+    #############################
+
+    sigma = 2.0 * Te / fESTAR  # SEE yield
+    sigma[sigma > 0.986] = 0.986
+    if wall_inter_type == "Default":
+        # nu_iw value before Martin changed the code for Charoy's test cases.    
+        nu_iw = (4./3.)*(1./(fR2 - fR1))*np.sqrt(phy_const.e*Te/fM)
+        # Limit the wall interactions to the inner channel
+        nu_iw[fx_center > fLTHR] = 0.0
+        nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
+    
+    elif wall_inter_type == "None":
+        nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
+        nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
+
+
+
+    # TODO: Put decreasing wall collisions (Not needed for the moment)
+    #    if decreasing_nu_iw:
+    #        index_L1 = np.argmax(z > L1)
+    #        index_LTHR = np.argmax(z > LTHR)
+    #        index_ind = index_L1 - index_LTHR + 1
+    #
+    #        nu_iw[index_LTHR: index_L1] = nu_iw[index_LTHR] * np.arange(index_ind, 1, -1) / index_ind
+    #        nu_iw[index_L1:] = 0.0
+
+    ##################################################
+    #       Compute the electron properties          #
+    ##################################################
+
+    nu_m = (
+        ng * fKEL + falpha_B * wce + nu_ew
+        )  # Electron momentum - transfer collision frequency
+    
+    mu_eff = (phy_const.e / (me* nu_m)) * (
+        1.0 / (1 + (wce / nu_m) ** 2)
+        )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
+
+    dp_dz  = gradient(ni*Te, fx_center)
+
+    E = -ve/mu_eff   - dp_dz/ni
+
+    return E
+
+
+#@njit
+def compute_phi(fV, fJ, fRext, fE, fx_center):
+    
+    phi = fV - fJ * fRext - cumTrapz(fE, fx_center)  # Discharge electrostatic potential
+    return phi
+
+
+#@njit
 def SetInlet(fP_In, fU_ghost, fP_ghost, fMi, ionization_type:str, fMDOT, fA0, fVG, fJ=0.0, moment=1):
 
     U_Bohm = np.sqrt(phy_const.e * fP_In[3] / fMi)
@@ -658,7 +728,7 @@ def worth_continue_parametric_study(I_nm1, I_n, deltat_n):
     
     deriv = (I_n - I_nm1)/deltat_n
     
-    return (abs(deriv) > 5000.0)|((I_n > 0.1) & (I_n < 50.0))
+    return (abs(deriv) > 5000.0)|((I_n > 0.01) & (I_n < 50.0))
 
 ##########################################################################################
 #                                                                                        #
@@ -666,7 +736,23 @@ def worth_continue_parametric_study(I_nm1, I_n, deltat_n):
 #                                                                                        #
 ##########################################################################################
 
-def SaveResults(fResults, fP, fU, fP_Inlet, fP_Outlet, fJ, fV, fBarr, fx_center, ftime, fi_save):
+def SaveUnvariantData(fResults, fBarr, fx_center, falpha_B):
+    if not os.path.exists(fResults):
+        os.makedirs(fResults)
+    ResultsFigs = fResults + "/Figs"
+    if not os.path.exists(ResultsFigs):
+        os.makedirs(ResultsFigs)
+    ResultsData = fResults + "/Data"
+    if not os.path.exists(ResultsData):
+        os.makedirs(ResultsData)
+    # Save the data
+    filenameTemp = ResultsData + "/UnvariantData.pkl"
+    pickle.dump(
+        [fBarr, fx_center, falpha_B], open(filenameTemp, "wb")
+    )
+
+
+def SaveVariableResults(fResults, fP, fU, fP_Inlet, fP_Outlet, fJ, fE, fphi, ftime, fi_save):
     if not os.path.exists(fResults):
         os.makedirs(fResults)
     ResultsFigs = fResults + "/Figs"
@@ -679,7 +765,7 @@ def SaveResults(fResults, fP, fU, fP_Inlet, fP_Outlet, fJ, fV, fBarr, fx_center,
     # Save the data
     filenameTemp = ResultsData + "/MacroscopicVars_" + f"{fi_save:06d}" + ".pkl"
     pickle.dump(
-        [ftime, fP, fU, fP_Inlet, fP_Outlet, fJ, fV, fBarr, fx_center], open(filenameTemp, "wb")
+        [ftime, fP, fU, fP_Inlet, fP_Outlet, fJ, fE, fphi], open(filenameTemp, "wb")
     )  # TODO: Save the current and the electric field
 
 
@@ -726,6 +812,7 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
     R1 = fsimuparams.R1
     R2 = fsimuparams.R2
 
+    LX  = fsimuparams.LX
     LTHR = fsimuparams.LTHR
     KEL = fsimuparams.KEL
     ionization_type = fsimuparams.ionization_type
@@ -745,8 +832,12 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
     CFL = fsimuparams.CFL
     IMPlICIT = fsimuparams.IMPlICIT
     HEATFLUX = fsimuparams.HEATFLUX
+    START_FROM_INPUT    = fsimuparams.START_FROM_INPUT
+    if START_FROM_INPUT:
+        INPUT_FILE          = fsimuparams.INPUT_FILE
 
     ### INITIALISATION OF LARGE VECTORS ###
+
     # Allocation of vectors
     P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
     U = np.ones((4, NBPOINTS))  # Conservative vars U = [rhog, rhoi, rhoUi, 3/2 ne*e*Te]
@@ -758,16 +849,53 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
     U_Outlet = np.ones((4, 1))  # Ghost cell on the right
     P_Outlet = np.ones((5, 1))  # Ghost cell on the right
 
-    # We initialize the primitive variables
-    ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
-    P[1, :] *= fsimuparams.NI0  # Initial ni
-    P[2, :] *= 0.0  # Initial vi
-    P[3, :] *= fsimuparams.TE0  # Initial Te
-    P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
-    P[4, :] *= P[2, :]
-    #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, ionization_type, SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
-    ### Warning, in the code currently, neutrals dyanmic is canceled.
-    P[0,:] = ng_anode    
+    if START_FROM_INPUT:
+
+        with open(INPUT_FILE, 'rb') as f:
+            [t_INIT, P_INIT, U_INIT, P_Inlet_INIT, P_Outlet_INIT, J_INIT, V_INIT, B_INIT, x_center_INIT] = pickle.load(f)
+
+        NBPOINTS_initialField = P_INIT.shape[1]
+        #Delta_x_initialField  = LX/NBPOINTS_initialField
+        x_mesh_initialField   = np.zeros(NBPOINTS_initialField+1, dtype=float) # Mesh in the interface
+        x_mesh_initialField[1:-1]   = 0.5*(x_center_INIT[:-1] + x_center_INIT[1:])
+        x_mesh_initialField[-1]     = LX
+        #x_center_initialField = np.linspace(Delta_x_initialField, LX - Delta_x_initialField, NBPOINTS_initialField)     # Mesh in the center of cell
+
+            # intégration de la fonction INITIAL field en cours.
+        P0_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[0,:], fill_value=(P_INIT[0,0], P_INIT[0,-1]), bounds_error=False)
+        P1_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[1,:], fill_value=(P_INIT[1,0], P_INIT[1,-1]), bounds_error=False)
+        P2_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[2,:], fill_value=(P_INIT[2,0], P_INIT[2,-1]), bounds_error=False)
+        P3_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[3,:], fill_value=(P_INIT[3,0], P_INIT[3,-1]), bounds_error=False)
+        P4_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[4,:], fill_value=(P_INIT[4,0], P_INIT[4,-1]), bounds_error=False)
+
+        # We initialize the primitive variables
+        P[0,:] = P0_INTERP(x_center)                           # Initial propellant density ng TODO
+        P[1,:] = P1_INTERP(x_center)                           # Initial ni
+        P[2,:] = P2_INTERP(x_center)                           # Initial vi
+        P[3,:] = P3_INTERP(x_center)                           # Initial Te
+        P[4,:] = P4_INTERP(x_center)                           # Initial Ve
+
+        Jm1 = J_INIT
+        J   = J_INIT
+        
+        del t_INIT, P_INIT, U_INIT, P_Inlet_INIT, P_Outlet_INIT, J_INIT, V_INIT, B_INIT , x_center_INIT, P0_INTERP, P1_INTERP, P2_INTERP, P3_INTERP, P4_INTERP
+
+    else:
+
+
+        # We initialize the primitive variables
+        ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
+        P[1, :] *= fsimuparams.NI0  # Initial ni
+        P[2, :] *= 0.0  # Initial vi
+        P[3, :] *= fsimuparams.TE0  # Initial Te
+        P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
+        P[4, :] *= P[2, :]
+        #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, ionization_type, SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+        ### Warning, in the code currently, neutrals dyanmic is canceled.
+        P[0,:] = ng_anode
+
+        Jm1 = 0.0
+        J = 0.0  # Initial Current
 
     if TIMESCHEME == "TVDRK3":
         P_1 = np.ones(
@@ -810,17 +938,6 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
     J = 0.0  # Initial Current
     worthKeepGoing = True
 
-    # We initialize the primitive variables
-    ng_anode = fsimuparams.MDOT / (Mi* A0 * fsimuparams.VG)  # Initial propellant density ng at the anode location
-    P[1, :] = fsimuparams.NI0  # Initial ni
-    P[2, :] = 0.0  # Initial vi
-    P[3, :] = fsimuparams.TE0  # Initial Te
-    P[3, :]  = SmoothInitialTemperature(P[3, :], fsimuparams.Te_Cath)
-    P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
-    #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, ionization_type, SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
-    ### Warning, in the code currently, neutrals dyanmic is canceled.
-    P[0,:] = ng_anode
-
     # compute mu to check whether or not similitude B scaling works.
     if checkBscaling:
         mu_eff_arr = compute_mu(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
@@ -837,12 +954,17 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
     #           U^{n+1}_j = U^{n}_j - Dt/Dx(F^n_{j+1/2} - F^n_{j-1/2}) + Dt S^n_j            #
     ##########################################################################################
 
+    if saveOrNot:
+        SaveUnvariantData(Results, Barr, x_center, alpha_B)
+
     if TIMESCHEME == "Forward Euler":
         J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, A0, Rext)
         while time < TIMEFINAL and worthKeepGoing:
             # Save results
             if saveOrNot and (iter % SAVERATE) == 0:
-                SaveResults(Results, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+                E = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+                phi = compute_phi(V, J, Rext, E, x_center)
+                SaveVariableResults(Results, P, U, P_Inlet, P_Outlet, J, E, phi, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -915,7 +1037,9 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
         while time < TIMEFINAL and worthKeepGoing:
             # Save results
             if saveOrNot and (iter % SAVERATE) == 0:
-                SaveResults(Results, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+                E = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+                phi = compute_phi(V, J, Rext, E, x_center)
+                SaveVariableResults(Results, P, U, P_Inlet, P_Outlet, J, E, phi, time, i_save)
                 i_save += 1
                 print(
                     "Iter = {}".format(iter),
@@ -1154,7 +1278,9 @@ def running_one_simulation(fsimuparams:SimuParameters, alpha_B, checkBscaling:bo
             iter += 1
 
     if saveOrNot:
-        SaveResults(Results, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+        E = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+        phi = compute_phi(V, J, Rext, E, x_center)
+        SaveVariableResults(Results, P, U, P_Inlet, P_Outlet, J, E, phi, time, i_save)
         i_save += 1
         print(
             "Iter = {}".format(iter),
@@ -1252,15 +1378,17 @@ if __name__ == '__main__':
     print("Start of the main block.")
     mainstarttime   = ttime.time()
 
-    #main_one_simulation('configuration_Charoy.ini')
+    main_one_simulation('configuration_Charoy.ini')
 
+    """    
     nalpha = 30
     alpha_B1_arr = np.linspace(1e-4, 1e-1, nalpha) # range of anomalous coeffs. in the channel
     alpha_B2_arr = np.linspace(1e-4, 1e-1, nalpha) # range of anomalous coeffs. in the channel
     # alpha_B1_arr = 10**alpha_B1_arr
     # alpha_B2_arr = 10**alpha_B2_arr
     main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)
-
+    """
     mainendtime     = ttime.time()
     mainduration    = int(mainendtime - mainstarttime)
+    
     print(f"The execution of th main block has last for {mainduration} s.")

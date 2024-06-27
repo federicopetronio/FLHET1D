@@ -105,6 +105,10 @@ class SimuParameters():
         else:
             self.MESHLEVELS = 0
             self.REFINEMENTLENGTH = 0.
+        self.START_FROM_INPUT = bool(
+            config.getboolean("Numerical Parameteres", "Start from input profiles", fallback=False) )
+        if self.START_FROM_INPUT:
+            self.INPUT_FILE = NumericsConfig["Input profiles file"]
 
         self.x_mesh, self.x_center, self.Delta_x, self.x_center_extd, self.Delta_x_extd = self.return_tiled_domain()
 

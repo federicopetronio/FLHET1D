@@ -26,7 +26,7 @@ ResultConfig = Results+'/Configuration.cfg'
 ##########################################################
 #           CONFIGURE PHYSICAL PARAMETERS
 ##########################################################
-
+### TODO: use the module simu_params.py to encapsulate the reading of the parameters.
 configFile = ResultConfig
 config = configparser.ConfigParser()
 config.read(configFile)
@@ -106,7 +106,6 @@ NBPOINTS_INIT  = int(NumericsConfig['Number of points'])             # Number of
 SAVERATE  = int(NumericsConfig['Save rate'])                    # Rate at which we store the data
 CFL       = float(NumericsConfig['CFL'])                        # Nondimensional size of the time step
 TIMEFINAL = float(NumericsConfig['Final time'])                 # Last time of simulation
-Results   = NumericsConfig['Result dir']                        # Name of result directory
 TIMESCHEME = NumericsConfig['Time integration']                        # Name of result directory
 IMPlICIT   = bool(
     config.getboolean("Numerical Parameteres", "Implicit heat flux", fallback=False) ) # Time integration scheme for heat flux equation
@@ -152,18 +151,6 @@ x_center_extended = np.insert(x_center, 0, -x_center[0])
 x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
 Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
 Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])
-
-
-# creates the array resulting 2 regions alpha_B
-alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
-alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
-alpha_B_smooth = np.copy(alpha_B)
-
-# smooth between alpha_B1 and alpha_B2
-nsmooth_o2 = 2*(NBPOINTS_INIT//20) - 1 # odd number representig ~ 10 % of the domain. So the following lines will achieve a centered average on the ith point.
-for index in range(nsmooth_o2//2, NBPOINTS - nsmooth_o2//2):
-    alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2//2 : index + nsmooth_o2//2 + 1])
-alpha_B = alpha_B_smooth
 
 
 ##########################################################
@@ -248,7 +235,7 @@ def compute_Rei_saturated(fP, fM, fx_center):
 
 
 @njit
-def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fJ):
+def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B):
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
@@ -256,10 +243,9 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
     #############################################################
     ng = fP[0,:]
     ni = fP[1,:]
-    ui = fP[2,:]
     Te = fP[3,:]
     ve = fP[4,:]
-    Gamma_i = ni*ui
+
     me = phy_const.m_e
     wce     = phy_const.e*fB/me   # electron cyclotron frequency
     
@@ -303,11 +289,10 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
         1.0 / (1 + (wce / nu_m) ** 2)
         )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
 
-    I0 = fJ/(phy_const.e*A0)
     dp_dz  = gradient(ni*Te, fx_center)
 
-    
-    E = (I0 - Gamma_i) / (mu_eff * ni) - dp_dz / ni  # Discharge electric field
+    E = -ve/mu_eff   - dp_dz/ni
+
     return E
 
 
@@ -348,7 +333,8 @@ if not os.path.exists(ResultsFigs):
     os.makedirs(ResultsFigs)
 
 # open all the files in the directory and sort them to do the video in order
-files       = glob.glob(ResultsData + "/*.pkl")
+fileUnvariantData   = ResultsData + "/UnvariantData.pkl"
+files       = glob.glob(ResultsData + "/MacroscopicVars_*.pkl")
 filesSorted = sorted(files, key = lambda x: os.path.getmtime(x), reverse=True)
 files.sort(key=os.path.getmtime)
 
@@ -366,7 +352,7 @@ time    = np.zeros(np.shape(files)[0])
 for i_save, file in enumerate(files):
     
     with open(file, 'rb') as f:
-        [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
+        [t, P, U, P_Inlet, P_Outlet, J, E, phi] = pickle.load(f)
     
     # Save the current
     Current[i_save] = J
@@ -390,17 +376,26 @@ ax_V.set_ylabel('$V$ [V]', fontsize=18)
 ax.grid(True)
 plt.tight_layout()
 plt.savefig(ResultsFigs+"/Current.pdf", bbox_inches='tight')
-    
+
+
+#####################################
+#       Produce a chart per frame
+#####################################
+
+### Extract Unvariant data
+with open(fileUnvariantData, 'rb') as f:
+    [B, x_center, alpha_B] = pickle.load(f)
+
+
 for i_save, file in enumerate(files):
 
     print("Preparing plot for i = ", i_save)
 
     with open(file, 'rb') as f:
-        [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
+        [t, P, U, P_Inlet, P_Outlet, J, E, phi] = pickle.load(f)
 
     if PLOT_VARS:
-        E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B, J)
-        phi = compute_phi(V, J, Rext, E, x_center)
+
         
         Rei_emp = compute_Rei_empirical(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, M, x_center, LTHR, KEL, alpha_B)
         #print(Rei_emp.shape)
@@ -467,7 +462,7 @@ for i_save, file in enumerate(files):
         ax_b.set_yticklabels([])
 
         ax[4].plot(time*1000., Current, label='Eff. $I_d$')
-        ax[4].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\Gamma_i - \Gamma_e)$')
+        ax[4].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\\Gamma_i - \\Gamma_e)$')
         ax[4].set_ylabel('$I_d$ [A]', fontsize=axisfontsize)
         ax[4].set_xlabel('$t$ [ms]', fontsize=axisfontsize)
         ax[4].plot([time[i_save]*1000., time[i_save]*1000.],

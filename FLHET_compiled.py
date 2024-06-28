@@ -986,11 +986,12 @@ def main(fconfigFile):
             Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                Delta_t = min(dt_HF, Delta_t)
             if HEATFLUX and IMPlICIT ==  True:
                 dt_HF = Delta_t
                 Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 print(Te)
-            Delta_t = min(dt_HF, Delta_t)
+            
 
 
             # Update the solution
@@ -1063,13 +1064,14 @@ def main(fconfigFile):
 
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                Delta_t = min(dt_HF, Delta_t)
             # First half step of strang-splitting
             if HEATFLUX and IMPlICIT ==  True:
                 dt_HF = Delta_t
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
-            Delta_t = min(dt_HF, Delta_t)
+            
             if iter == 0:
                 Delta_t = Delta_t/3
 
@@ -1484,12 +1486,13 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and IMPlICIT ==  False:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        Delta_t = min(dt_HF, Delta_t)
                     if HEATFLUX and IMPlICIT ==  True:
                         dt_HF = Delta_t
                         heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, Delta_t)
 
 
-                    Delta_t = min(dt_HF, Delta_t)
+                    
 
                     # Update the solution
                     U[:, :] = (
@@ -1545,12 +1548,14 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-                    if HEATFLUX:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
                     # Compute the convective Delta t
                     Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
-                    Delta_t = min(dt_HF, Delta_t)
+
+                    if HEATFLUX:
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        Delta_t = min(dt_HF, Delta_t)
+                    
                     if iter == 0:
                         Delta_t = Delta_t/3
 

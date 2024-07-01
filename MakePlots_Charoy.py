@@ -77,7 +77,10 @@ if MagneticFieldConfig["Type"] == "Default":
 
 # Ionization source term configuration
 IonizationConfig = config["Ionization configuration"]
-if IonizationConfig["Type"] == "SourceIsImposed":
+isSourceImposed = bool(
+        config.getboolean("Ionization configuration", "source is imposed", fallback=False)
+    )
+if isSourceImposed:
     print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
 SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
 LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
@@ -86,6 +89,9 @@ assert(LSIZ2 >= LSIZ1)
 
 # Collisions parameters
 CollisionsConfig = config["Collisions"]
+areThereIonizationColl = bool(
+    config.getboolean("Collisions", "enable ionization coll.", fallback=False)
+)
 KEL = float(CollisionsConfig["Elastic collisions reaction rate"])
 
 # Wall interactions

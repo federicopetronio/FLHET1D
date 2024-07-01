@@ -143,21 +143,19 @@ def IntegralSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2):
 
 
 @njit
-def InitNeutralDensity(fx_center, fng_cathode, fVG, fP, ionization_type:str, fSIZMAX, fLSIZ1, fLSIZ2):
+def InitNeutralDensity(fx_center, fng_cathode, fVG, fP, fisSourceImposed, fSIZMAX, fLSIZ1, fLSIZ2):
     Eion = 12.1
     ni = fP[1,:]
     Te = fP[3,:]
-    if ionization_type == 'SourceIsImposed':
+    if fisSourceImposed:
         Siz_arr = GetImposedSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
         dx_temp = (fx_center[-1] - fx_center[0])/(fx_center.shape[0] - 1)
         ng_init = fng_cathode - (1/fVG)*CumTrapz(Siz_arr, dx_temp)
         #ng_init = fng_cathode - (1/fVG)*IntegralSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
 
-    elif ionization_type == 'Default':
-        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))
-        ng_init = fng_cathode*np.exp( - (1/fVG) * ni * Kiz * fx_center)    
     else:
-        ng_init = np.full(fx_center.shape, fng_cathode)
+        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))
+        ng_init = fng_cathode*np.exp( - (1/fVG) * ni * Kiz * fx_center)
 
     return ng_init
 
@@ -200,7 +198,7 @@ def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center,
 
 
 @njit
-def Source(fP, fS, fBarr, ionization_type:str, wall_inter_type:str,fx_center, fSIZMAX, fLSIZ1, fLSIZ2, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
+def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fSIZMAX, fLSIZ1, fLSIZ2, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -223,11 +221,17 @@ def Source(fP, fS, fBarr, ionization_type:str, wall_inter_type:str,fx_center, fS
 
     Siz_arr = np.zeros(ng.shape, dtype=float) # the final unit of Siz_arr is m^(-3).s^(-1)
     # Computing ionization source term:
-    if ionization_type == 'Default':
+    if not fisSourceImposed:
         Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
         Siz_arr = ng*ni*Kiz
-    elif ionization_type == 'SourceIsImposed':
+    else:
         Siz_arr = GetImposedSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
+
+    # If ionization collision are considered in the momentum and energy equations.
+    if fenableIonColl:
+        d_IC = 1.0
+    else:
+        d_IC = 0.
 
     sigma = 2.0 * Te / fESTAR  # SEE yield
     sigma[sigma > 0.986] = 0.986
@@ -271,19 +275,17 @@ def Source(fP, fS, fBarr, ionization_type:str, wall_inter_type:str,fx_center, fS
     div_p = gradient(phy_const.e*ni*Te, fx_center) # To be used with 5./2 and + div_p*ve in line 231    
     # div_p = np.zeros(Te.shape)
 
-    #fS[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * fMi # Gas Density
-    ### Warning currently in the code, neutrals dynamic is canceled.
-    fS[0, :] = 0.
-    fS[1, :] = (Siz_arr - nu_iw[:] * ni[:]) * fMi # Ion Density
+    fS[0, :] = (-d_IC * Siz_arr + nu_iw * ni) * fMi # Gas Density
+    fS[1, :] = (Siz_arr - nu_iw * ni) * fMi # Ion Density
     fS[2, :] = (
-        Siz_arr * fVG
-        - (phy_const.e / (mu_eff[:] * fMi)) * ni[:] * ve[:]
-        - nu_iw[:] * ni[:] * vi[:]
+        d_IC * Siz_arr * fVG
+        - (phy_const.e / (mu_eff[:] * fMi)) * ni * ve
+        - nu_iw * ni * vi
         ) * fMi # Momentum
     fS[3,:] = (
-        - Siz_arr * Eion * gamma_i * phy_const.e
-        - nu_ew[:] * ni[:] * Ew * phy_const.e
-        + (1./mu_eff[:]) * ni[:] * ve[:]**2 * phy_const.e
+        - d_IC * Siz_arr * Eion * gamma_i * phy_const.e
+        - nu_ew * ni * Ew * phy_const.e
+        + (1./mu_eff) * ni * ve**2 * phy_const.e
         + div_p*ve
     )
 
@@ -545,17 +547,17 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
 
 
 @njit
-def SetInlet(fP_In, fU_ghost, fP_ghost, fMi, ionization_type:str, fMDOT, fA0, fVG, fJ=0.0, moment=1):
+def SetInlet(fP_In, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA0, fVG, fJ=0.0, moment=1):
 
     U_Bohm = np.sqrt(phy_const.e * fP_In[3] / fMi)
 
-    if ionization_type == 'Default':
+    if not fisSourceImposed:
         if fP_In[1] * fP_In[2] < 0.0:
             fU_ghost[0] = (fMDOT - fMi* fP_In[1] * fP_In[2] * fA0) / (fA0 * fVG)
         else:
             fU_ghost[0] = fMDOT / (fA0 * fVG)
 
-    elif ionization_type == 'SourceIsImposed':
+    else:
         fU_ghost[0] = fMDOT / (fA0 * fVG)
     
     fU_ghost[1] = fP_In[1] * fMi
@@ -768,7 +770,10 @@ def main(fconfigFile):
 
     # Ionization source term configuration
     IonizationConfig = config["Ionization configuration"]
-    if IonizationConfig["Type"] == "SourceIsImposed":
+    isSourceImposed = bool(
+        config.getboolean("Ionization configuration", "source is imposed", fallback=False)
+    )
+    if isSourceImposed:
         print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
     SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
     LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
@@ -777,6 +782,9 @@ def main(fconfigFile):
 
     # Collisions parameters
     CollisionsConfig = config["Collisions"]
+    areThereIonizationColl = bool(
+        config.getboolean("Collisions", "enable ionization coll.", fallback=False)
+    )    
     KEL = float(CollisionsConfig["Elastic collisions reaction rate"])
 
     # Wall interactions
@@ -962,7 +970,7 @@ def main(fconfigFile):
                 )
 
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 1)
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 1)
             SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
@@ -983,7 +991,7 @@ def main(fconfigFile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
@@ -1040,7 +1048,7 @@ def main(fconfigFile):
             ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J)
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J)
             SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
             # Compute the Fluxes in the center of the cell
             InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
@@ -1060,7 +1068,7 @@ def main(fconfigFile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
@@ -1108,7 +1116,7 @@ def main(fconfigFile):
             #           SECOND STEP RK3
             #################################################
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 2)
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 2)
             SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
@@ -1126,7 +1134,7 @@ def main(fconfigFile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                
@@ -1166,7 +1174,7 @@ def main(fconfigFile):
             #           THIRD STEP RK3
             #################################################
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 3)
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 3)
             SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
@@ -1183,7 +1191,7 @@ def main(fconfigFile):
                 VG
             )
             # Compute the source in the center of the cell
-            Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and IMPlICIT ==  False:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
@@ -1202,7 +1210,7 @@ def main(fconfigFile):
             )
             # Second half step of strang-splitting
             if HEATFLUX and IMPlICIT ==  True:
-                SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 3)
+                SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 3)
                 SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
@@ -1461,7 +1469,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                 while time < TIMEFINAL:
 
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 1)
+                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 1)
                     SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
                     # Compute the Fluxes in the center of the cell
@@ -1483,7 +1491,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and IMPlICIT ==  False:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
@@ -1529,7 +1537,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J)
+                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J)
                     SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
                     # Compute the Fluxes in the center of the cell
                     InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
@@ -1547,7 +1555,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
                     # Compute the convective Delta t
                     Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
@@ -1591,7 +1599,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     #           SECOND STEP RK3
                     #################################################
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 2)
+                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 2)
                     SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
 
                     # Compute the Fluxes in the center of the cell
@@ -1609,7 +1617,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
@@ -1648,7 +1656,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     #           THIRD STEP RK3
                     #################################################
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, IonizationConfig['Type'], MDOT, A0, VG, J, 3)
+                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 3)
                     SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
                     # Compute the Fluxes in the center of the cell
@@ -1665,7 +1673,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         VG
                     )
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, IonizationConfig['Type'], WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 

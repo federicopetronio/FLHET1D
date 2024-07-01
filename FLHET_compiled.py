@@ -1275,6 +1275,7 @@ def main(fconfigFile):
 
 
 def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
+
     tttime_start = ttime.time()
 
     config = configparser.ConfigParser()
@@ -1324,7 +1325,10 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
     # Ionization source term configuration
     IonizationConfig = config["Ionization configuration"]
-    if IonizationConfig["Type"] == "SourceIsImposed":
+    isSourceImposed = bool(
+        config.getboolean("Ionization configuration", "source is imposed", fallback=False)
+    )
+    if isSourceImposed:
         print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
     SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
     LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
@@ -1333,6 +1337,9 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
     # Collisions parameters
     CollisionsConfig = config["Collisions"]
+    areThereIonizationColl = bool(
+        config.getboolean("Collisions", "enable ionization coll.", fallback=False)
+    )    
     KEL = float(CollisionsConfig["Elastic collisions reaction rate"])
 
     # Wall interactions
@@ -1352,6 +1359,13 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     TIMESCHEME = NumericsConfig["Time integration"]  # Time integration scheme
     IMPlICIT   = bool(
         config.getboolean("Numerical Parameteres", "Implicit heat flux", fallback=False) ) # Time integration scheme for heat flux equation
+    MESHREFINEMENT =  bool(
+        config.getboolean("Numerical Parameteres", "Mesh refinement", fallback=False) )
+    if MESHREFINEMENT:
+        MESHLEVELS = int(NumericsConfig["Mesh levels"])
+        REFINEMENTLENGTH = float(NumericsConfig["Refinement length"])
+
+
 
     if not os.path.exists(Results):
         os.makedirs(Results)
@@ -1359,14 +1373,45 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
         config.write(configfile)
 
     ##########################################################
-    #           Global Variables and array                   #
+    #           Allocation of large vectors                  #
     ##########################################################
 
     Delta_t = 1.0  # Initialization of Delta_t (do not change)
-    Delta_x = LX / NBPOINTS
+    # Delta_x = LX / NBPOINTS
 
     x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
-    x_center = np.linspace(0.5*Delta_x, LX - 0.5*Delta_x, NBPOINTS)  # Mesh in the center of cell
+    if MESHREFINEMENT:
+        # get the point below the refinement length
+        Dx_notRefined = x_mesh[1]
+        #First level
+        i_refinement = int(np.floor(REFINEMENTLENGTH/Dx_notRefined))
+        mesh_level_im1 = np.linspace(0, x_mesh[i_refinement], i_refinement*2 + 1)
+        mesh_refinedim1 = np.concatenate((mesh_level_im1[:-1], x_mesh[i_refinement:]))
+        # plt.plot(x_mesh, np.zeros_like(x_mesh), linestyle='None', marker='o', markersize=2)
+        # plt.plot(mesh_refinedim1, np.ones_like(mesh_refinedim1), linestyle='None', marker='o', markersize=2)
+
+        #Secondand rest of levels level
+        if MESHLEVELS > 1:
+            for i_level in range(2, MESHLEVELS + 1):
+                i_refinement_level   = int((np.shape(mesh_level_im1)[0] - 1)/2)
+                mesh_level_i         = np.linspace(0, mesh_level_im1[i_refinement_level], i_refinement_level*2 + 1)
+                mesh_refined_level_i = np.concatenate((mesh_level_i[:-1], mesh_refinedim1[i_refinement_level:]))
+
+                mesh_level_im1      = mesh_level_i
+                mesh_refinedim1     = mesh_refined_level_i
+                # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
+            x_mesh = np.copy(mesh_refined_level_i)
+
+    # x_center = np.linspace(0.5*Delta_x, LX - 0.5*Delta_x, NBPOINTS)  # Mesh in the center of cell
+    x_center = (x_mesh[1:] + x_mesh[:-1])/2
+    Delta_x  =  x_mesh[1:] - x_mesh[:-1]
+    NBPOINTS = np.shape(x_center)[0]
+    # We create an array that also include the position of the ghost cells
+    x_center_extended = np.insert(x_center, 0, -x_center[0])
+    x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
+    Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
+    Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])    
+
     Barr = GetImposedB(x_center, BMAX, B0, BLX, LX, LTHR, LB1, LB2)
 
     nalphaB1 = falpha_B1_arr.shape[0]
@@ -1396,8 +1441,6 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
             for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2-1)):
                 alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
             alpha_B = alpha_B_smooth
-
-            Delta_t = 1.0  # Initialization of Delta_t (do not change)
 
             # Allocation of vectors
             P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
@@ -1454,10 +1497,13 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
             P[3, :] *= TE0  # Initial Te
             # P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
             P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
-            P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+            #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+            ### Warning, in the code currently, neutrals dyanmic is canceled.
+            P[0,:] = ng_anode
 
             # We initialize the conservative variables
             PrimToCons(P, U, Mi)
+
 
             ##########################################################################################
             #           Loop with Forward Euler                                                      #
@@ -1475,6 +1521,8 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the Fluxes in the center of the cell
                     InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
 
+                    # Compute the convective Delta t
+                    Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
                     #print(Delta_t)
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
@@ -1486,21 +1534,18 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         Mi,
                         VG,
                     )
-                    # Compute the convective Delta t
-                    Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
-
 
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and IMPlICIT ==  False:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
                     if HEATFLUX and IMPlICIT ==  True:
                         dt_HF = Delta_t
-                        heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, Delta_t)
-
-
+                        Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                        print(Te)
                     
+
 
                     # Update the solution
                     U[:, :] = (
@@ -1541,8 +1586,10 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
                     # Compute the Fluxes in the center of the cell
                     InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
-
-
+                    # Compute the convective Delta t (Only in the first step)
+                    Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+                    if iter == 0:
+                        Delta_t = Delta_t/3
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
                         np.concatenate([P_Inlet, P, P_Outlet], axis=1),
@@ -1557,15 +1604,19 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
-                    # Compute the convective Delta t
-                    Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
-
-                    if HEATFLUX:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                    if HEATFLUX and IMPlICIT ==  False:
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
+                    # First half step of strang-splitting
+                    if HEATFLUX and IMPlICIT ==  True:
+                        dt_HF = Delta_t
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                        U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
                     
                     if iter == 0:
                         Delta_t = Delta_t/3
+
 
                     # Update the solution
                     U[:, :] = (
@@ -1618,8 +1669,9 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-                    if HEATFLUX:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                    if HEATFLUX and IMPlICIT ==  False:
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                    
 
                     # Update the solution
                     U[:, :] = (
@@ -1674,8 +1726,8 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-                    if HEATFLUX:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                    if HEATFLUX and IMPlICIT ==  False:
+                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
                     # Update the solution
                     U[:, :] = (
@@ -1690,6 +1742,12 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                             + Delta_t * S[:, :]
                         )
                     )
+                    # Second half step of strang-splitting
+                    if HEATFLUX and IMPlICIT ==  True:
+                        SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 3)
+                        SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
+                        U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
                     # Prevent the energy to be strictly negative
                     U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
@@ -1719,7 +1777,6 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                         # Change the Voltage
                         V = V0 - X_Volt0[0]
-                    
                     time += Delta_t
 
                     iter += 1
@@ -1732,13 +1789,16 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
     np.savetxt(Results + '/mean_j_array.csv', means_j, delimiter='\t')
 
+    ttime_end = ttime.time()
+    print("Exec time = {:.2f} s".format(ttime_end - tttime_start))
+
 
 if __name__ == '__main__':
-    main('configuration_Charoy.ini')
+    #main('configuration_Charoy.ini')
 
-    #nalpha = 30
-    #alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
-    #alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
-    #alpha_B1_arr = 10**alpha_B1_arr
-    #alpha_B2_arr = 10**alpha_B2_arr
-    #main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)
+    nalpha = 2
+    alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
+    alpha_B1_arr = 10**alpha_B1_arr
+    alpha_B2_arr = 10**alpha_B2_arr
+    main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)

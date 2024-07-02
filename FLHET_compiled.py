@@ -992,10 +992,10 @@ def main(fconfigFile):
 
             # Compute the source in the center of the cell
             Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
-            if HEATFLUX and IMPlICIT ==  True:
+            if HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
                 Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 print(Te)
@@ -1070,11 +1070,11 @@ def main(fconfigFile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
             # First half step of strang-splitting
-            if HEATFLUX and IMPlICIT ==  True:
+            if HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
@@ -1135,7 +1135,7 @@ def main(fconfigFile):
 
             # Compute the source in the center of the cell
             Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                
 
@@ -1192,7 +1192,7 @@ def main(fconfigFile):
             )
             # Compute the source in the center of the cell
             Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-            if HEATFLUX and IMPlICIT ==  False:
+            if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
             # Update the solution
@@ -1209,7 +1209,7 @@ def main(fconfigFile):
                 )
             )
             # Second half step of strang-splitting
-            if HEATFLUX and IMPlICIT ==  True:
+            if HEATFLUX and IMPlICIT:
                 SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 3)
                 SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
                 P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
@@ -1424,13 +1424,12 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     means_j = np.zeros(alpha_B1_mesh.shape, dtype=float)
 
     for j in range(nalphaB1):
-        for i in range(j, nalphaB2):
+        for i in range(nalphaB2):
             alpha_B1 = falpha_B1_arr[j]
             alpha_B2 = falpha_B2_arr[i]
 
             print(f"i={i:3d} aB2={alpha_B2:.4e} ;\tj={j:3d} aB1={alpha_B1:.4e} ;\tRunning...", end='\r')
             subttime_start = ttime.time()
-
 
             alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
             alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
@@ -1537,10 +1536,10 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-                    if HEATFLUX and IMPlICIT ==  False:
+                    if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
-                    if HEATFLUX and IMPlICIT ==  True:
+                    if HEATFLUX and IMPlICIT:
                         dt_HF = Delta_t
                         Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                         print(Te)
@@ -1604,11 +1603,11 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
-                    if HEATFLUX and IMPlICIT ==  False:
+                    if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
                     # First half step of strang-splitting
-                    if HEATFLUX and IMPlICIT ==  True:
+                    if HEATFLUX and IMPlICIT:
                         dt_HF = Delta_t
                         P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                         U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
@@ -1669,7 +1668,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-                    if HEATFLUX and IMPlICIT ==  False:
+                    if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                     
 
@@ -1726,7 +1725,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, isSourceImposed, areThereIonizationColl, WallInteractionConfig['Type'], x_center, SIZMAX, LSIZ1, LSIZ2, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
-                    if HEATFLUX and IMPlICIT ==  False:
+                    if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
                     # Update the solution
@@ -1743,7 +1742,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         )
                     )
                     # Second half step of strang-splitting
-                    if HEATFLUX and IMPlICIT ==  True:
+                    if HEATFLUX and IMPlICIT:
                         SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 3)
                         SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
                         P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), WallInteractionConfig['Type'], x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
@@ -1782,7 +1781,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     iter += 1
 
             j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
-            means_j[i, j] = np.mean(j_of_x)
+            means_j[i, j] = (1/LX) * np.sum(j_of_x * Delta_x)
             subttime_end = ttime.time()
             subttime_delta = int(subttime_end - subttime_start)
             print(f"i={i:3d} aB2={alpha_B2:.4e} ;\tj={j:3d} aB1={alpha_B1:.4e} ;\tJ={means_j[i, j]:.3e} A.m^{-2}\tt_comput={subttime_delta} s")
@@ -1794,11 +1793,14 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
 
 if __name__ == '__main__':
-    #main('configuration_Charoy.ini')
+    main('configuration_Charoy.ini')
 
-    nalpha = 2
+    """    nalpha = 20
     alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
     alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
     alpha_B1_arr = 10**alpha_B1_arr
     alpha_B2_arr = 10**alpha_B2_arr
-    main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)
+    """
+    #alpha_B1_arr = np.array([3.7927e-3])
+    #alpha_B2_arr = np.array([5.4556e-03, 7.8476e-03, 1.1288e-02])
+    #main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)

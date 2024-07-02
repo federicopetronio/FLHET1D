@@ -966,9 +966,13 @@ def main(fconfigFile):
                     "Iter = ",
                     iter,
                     "\tTime = {:.2f}~µs".format(time / 1e-6),
-                    "\tJ = {:.4f}~A".format(J),
+                    "\tI = {:.4f}~A".format(J),
+                    "\tJ = {:.3e} A/m2".format(J/A0),
                 )
-
+                # Another way of processing J_d which is equivalent to J_d = I / A0
+                #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+                #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
+                #print("J processed another way = {:.3e} A/m2".format(mean_j)) 
             # Set the boundaries
             SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, isSourceImposed, MDOT, A0, VG, J, 1)
             SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
@@ -1030,11 +1034,16 @@ def main(fconfigFile):
                 SaveResults(Results, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
                 i_save += 1
                 print(
-                    "Iter = {}".format(iter),
-                    "\t Time = {:.4f} µs".format(time * 1e6),
-                    "\t J = {:.4f} A".format(J),
-                    "\t V = {:.4f} V".format(V),
+                    "Iter = ",
+                    iter,
+                    "\tTime = {:.2f}~µs".format(time / 1e-6),
+                    "\tI = {:.4f}~A".format(J),
+                    "\tJ = {:.3e} A/m2".format(J/A0),
                 )
+                # Another way of processing J_d which is equivalent to J_d = I / A0
+                #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+                #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
+                #print("J processed another way = {:.3e} A/m2".format(mean_j))
                 #CompareIonizationTypes(x_center, P)
 
             #################################################
@@ -1260,15 +1269,21 @@ def main(fconfigFile):
                         file.write(a_str)
                         file.write("\n")  # Add a newline at the end (optional)
             iter += 1
-
+    # Saves the last frame
     SaveResults(Results, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
     i_save += 1
     print(
-        "Iter = {}".format(iter),
-        "\t Time = {:.4f} µs".format(time * 1e6),
-        "\t J = {:.4f} A".format(J),
-        "\t V = {:.4f} V".format(V),
-    ) # Saves the last frame
+        "Iter = ",
+        iter,
+        "\tTime = {:.2f}~µs".format(time / 1e-6),
+        "\tI = {:.4f}~A".format(J),
+        "\tJ = {:.3e} A/m2".format(J/A0),
+    )
+    # Another way of processing J_d which is equivalent to J_d = I / A0
+    #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+    #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
+    #print("J processed another way = {:.3e} A/m2".format(mean_j))
+
 
     ttime_end = ttime.time()
     print("Exec time = {:.2f} s".format(ttime_end - tttime_start))
@@ -1802,5 +1817,5 @@ if __name__ == '__main__':
     alpha_B2_arr = 10**alpha_B2_arr
     """
     #alpha_B1_arr = np.array([3.7927e-3])
-    #alpha_B2_arr = np.array([5.4556e-03, 7.8476e-03, 1.1288e-02])
+    #alpha_B2_arr = np.array([7.8476e-3, 1.1288e-2])
     #main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)

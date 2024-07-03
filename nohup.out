@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "/home/mguillon/Documents/Stage_LPP/Codes/FLHET1D_alvarez_implicitheatf/FLHET_compiled.py", line 1, in <module>
-    import numpy as np
-ModuleNotFoundError: No module named 'numpy'
-Default Magnetic Field
-The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.
-i=  0 aB2=7.8476e-03 ;	j=  0 aB1=3.7927e-03 ;	Running...i=  0 aB2=7.8476e-03 ;	j=  0 aB1=3.7927e-03 ;	J=4.533e+01 A.m^-2	t_comput=146 s
-i=  1 aB2=1.1288e-02 ;	j=  0 aB1=3.7927e-03 ;	Running...i=  1 aB2=1.1288e-02 ;	j=  0 aB1=3.7927e-03 ;	J=4.365e+01 A.m^-2	t_comput=134 s
-Exec time = 281.69 s

@@ -37,6 +37,65 @@ def gradient(y, x):
 
 
 @njit
+def compute_Rei_empirical(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B):
+    
+    #############################################################
+    #       We give a name to the vars to make it more readable
+    #############################################################
+    ng = fP[0,:]
+    ni = fP[1,:]
+    Te = fP[3,:]
+    ve = fP[4,:]
+
+    me = phy_const.m_e
+    wce= phy_const.e*fB/me   # electron cyclotron frequency
+    
+    #############################
+    #       Compute the rates   #
+    #############################
+
+    sigma = 2.0 * Te / fESTAR  # SEE yield
+    sigma[sigma > 0.986] = 0.986
+    if wall_inter_type == "Default":
+        # nu_iw value before Martin changed the code for Charoy's test cases.    
+        nu_iw = (4./3.)*(1./(fR2 - fR1))*np.sqrt(phy_const.e*Te/fM)
+        # Limit the wall interactions to the inner channel
+        nu_iw[fx_center > fLTHR] = 0.0
+        nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
+    
+    elif wall_inter_type == "None":
+        nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
+        nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
+
+    nu_m = (
+        ng * fKEL + falpha_B * wce + nu_ew
+        )  # Electron momentum - transfer collision frequency
+
+    vey = (wce/nu_m)*ve
+
+    Rei_emp = - me * ni * vey * nu_m
+
+    return Rei_emp
+
+
+@njit
+def compute_Rei_saturated(fP, fM, fx_center):
+    #############################################################
+    #       We give a name to the vars to make it more readable
+    #############################################################
+    ni = fP[1,:]
+    vi = fP[2,:]
+    Te = fP[3,:]
+    uB = np.sqrt(phy_const.e*Te / fM) # Bohm velocity or sound speed.
+
+    deriv_factor = gradient(vi*ni*Te, fx_center)
+
+    Rei_saturated = (phy_const.e/(16 * np.sqrt(6) * uB)) * np.abs(deriv_factor)
+
+    return Rei_saturated
+
+
+@njit
 def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fJ, fA0):
 
     # TODO: This is already computed! Maybe move to the source
@@ -128,7 +187,6 @@ if __name__ == '__main__':
     #           POST-PROC PARAMETERS
     ##########################################################
     Results     = sys.argv[1]
-    PLOT_VARS   = True
     ResultConfig = Results+'/Configuration.cfg'
 
     ##########################################################
@@ -357,119 +415,125 @@ if __name__ == '__main__':
         with open(file, 'rb') as f:
             [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
 
-        if PLOT_VARS:
-            E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B, J, A0)
-            phi = compute_phi(E, Delta_x, J, V, Rext)
+
+        E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B, J, A0)
+        phi = compute_phi(E, Delta_x, J, V, Rext)
+        
+        Rei_emp = compute_Rei_empirical(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+        #print(Rei_emp.shape)
+
+        Rei_sat = compute_Rei_saturated(P, Mi, x_center)
+        #print(Rei_sat.shape)
+
+        f = plt.figure(figsize = (12,9))
+
+        ax1 = plt.subplot2grid((4,2),(0,0))
+        ax2 = plt.subplot2grid((4,2),(1,0))
+        ax3 = plt.subplot2grid((4,2),(2,0))
+        ax4 = plt.subplot2grid((4,2),(3,0))
+        ax5 = plt.subplot2grid((4,2),(0,1))
+        ax6 = plt.subplot2grid((4,2),(1,1))
+        ax7 = plt.subplot2grid((4,2),(2,1))
+        ax8 = plt.subplot2grid((4,2),(3,1))
+
+        ax = [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8]
+
+        ax_b=ax[0].twinx()
+        ax[0].plot(x_center*100, P[0,:]/1e19)
+        ax[0].set_ylabel('$n_g$ [10$^{19}$ m$^{-3}$]', fontsize=axisfontsize)
+        ax[0].set_xticklabels([])
+        ax[0].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)        
+        ax[0].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[0].set_ylim([0, 3.0])
+        ax_b.set_ylabel('$B$ [mT]', color='r', fontsize=axisfontsize)
+        ax_b.yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax_b.plot(x_center*100, B*1000, 'r:')
+
+        ax_phi=ax[1].twinx()
+        ax[1].plot(x_center*100, E/1000.)
+        ax[1].set_ylabel('$E$ [kV/m]', fontsize=axisfontsize)
+        ax[1].set_xticklabels([])
+        ax[1].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[1].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax_phi.plot(x_center*100, phi, color='r')
+        ax_phi.set_ylabel('$V$ [V]', color='r', fontsize=axisfontsize)
+        ax_phi.yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+
+        ax_b=ax[2].twinx()
+        ax[2].plot(x_center*100, P[1,:]/1e18)
+        ax[2].set_ylabel('$n_i$ [10$^{18}$ m$^{-3}$]', fontsize=axisfontsize)
+        ax[2].set_xlabel('$x$ [cm]', fontsize=axisfontsize)        
+        ax[2].set_xticklabels([])
+        ax[2].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[2].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax_b.plot(x_center*100, B, 'r:')
+        ax_b.set_yticklabels([])
+        ax[2].set_ylim([0., max(1.0, np.max(P[1,:]/1e18))])
+
+        ax[3].plot(time*1000., Current, label='Eff. $I_d$')
+        ax[3].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\Gamma_i - \Gamma_e)$')
+        ax[3].set_ylabel('$I_d$ [A]', fontsize=axisfontsize)
+        ax[3].set_xlabel('$t$ [ms]', fontsize=axisfontsize)
+        ax[3].plot([time[i_save]*1000., time[i_save]*1000.],
+                [Current[i_save], CurrentDensity[i_save]*A0],
+                'ko', markersize=5)
+        ax[3].yaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
+        ax[3].xaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
+        ax[3].legend(fontsize=tickfontsize)
+        ax[3].set_ylim([0., max(10.0, 1.1*Current.max())])
+        
+        ax_b=ax[4].twinx()
+        ax[4].plot(x_center*100, P[3,:])
+        ax[4].set_ylabel('$T_e$ [eV]', fontsize=axisfontsize)
+        ax[4].set_xticklabels([])
+        ax[4].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[4].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax_b.plot(x_center*100, B, 'r:')
+        ax_b.set_yticklabels([])
+
+        ax_b=ax[5].twinx()
+        ax[5].plot(x_center*100, P[2,:]/1000, label="$v_i$")
+        ax[5].plot(x_center*100, np.sqrt(phy_const.e*P[3,:]/(131.293*phy_const.m_u))/1000.,'g--', label="$v_{Bohm}$")
+        ax[5].set_ylabel('$v_i$ [km/s]', fontsize=axisfontsize)
+        ax[5].set_xticklabels([])
+        ax[5].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[5].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax_b.plot(x_center*100, B, 'r:')
+        ax_b.set_yticklabels([])
+        ax[5].legend(fontsize=tickfontsize)
+
+        ax_b = ax[6].twinx()
+        ax[6].plot(x_center*100, P[4,:]/1000)
+        ax[6].set_ylabel('$v_e$ [km/s]', fontsize=axisfontsize)
+        ax[6].set_xticklabels([])
+        ax[6].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[6].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax_b.plot(x_center*100, B, 'r:')
+        ax_b.set_yticklabels([])
+
+        j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+        ax_b = ax[7].twinx()
+        ax[7].plot(x_center*100, j_of_x)
+        ax[7].set_ylabel('$J_d$ [A.m$^{-2}$]', fontsize=axisfontsize)
+        ax[7].set_xlabel('$x$ [cm]', fontsize=axisfontsize)
+        ax[7].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[7].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[7].set_ylim([0.,max(800., 1.1*j_of_x.max())])
+        ax_b.plot(x_center*100, B, 'r:')
+        ax_b.set_yticklabels([])
+
+        title = 'time = '+ str(round(t/1e-6, 4))+'$\mu$s'
+        f.suptitle(title)
+
+        for axis in ax:
+            axis.grid(True)
             
-            f = plt.figure(figsize = (12,9))
+        plt.tight_layout()
 
-            ax1 = plt.subplot2grid((4,2),(0,0))
-            ax2 = plt.subplot2grid((4,2),(1,0))
-            ax3 = plt.subplot2grid((4,2),(2,0))
-            ax4 = plt.subplot2grid((4,2),(3,0))
-            ax5 = plt.subplot2grid((4,2),(0,1))
-            ax6 = plt.subplot2grid((4,2),(1,1))
-            ax7 = plt.subplot2grid((4,2),(2,1))
-            ax8 = plt.subplot2grid((4,2),(3,1))
-
-            ax = [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8]
-
-            ax_b=ax[0].twinx()
-            ax[0].plot(x_center*100, P[0,:]/1e19)
-            ax[0].set_ylabel('$n_g$ [10$^{19}$ m$^{-3}$]', fontsize=axisfontsize)
-            ax[0].set_xticklabels([])
-            ax[0].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)        
-            ax[0].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[0].set_ylim([0, 3.0])
-            ax_b.set_ylabel('$B$ [mT]', color='r', fontsize=axisfontsize)
-            ax_b.yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax_b.plot(x_center*100, B*1000, 'r:')
-
-            ax_phi=ax[1].twinx()
-            ax[1].plot(x_center*100, E/1000.)
-            ax[1].set_ylabel('$E$ [kV/m]', fontsize=axisfontsize)
-            ax[1].set_xticklabels([])
-            ax[1].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[1].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax_phi.plot(x_center*100, phi, color='r')
-            ax_phi.set_ylabel('$V$ [V]', color='r', fontsize=axisfontsize)
-            ax_phi.yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-
-            ax_b=ax[2].twinx()
-            ax[2].plot(x_center*100, P[1,:]/1e18)
-            ax[2].set_ylabel('$n_i$ [10$^{18}$ m$^{-3}$]', fontsize=axisfontsize)
-            ax[2].set_xlabel('$x$ [cm]', fontsize=axisfontsize)        
-            ax[2].set_xticklabels([])
-            ax[2].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[2].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax_b.plot(x_center*100, B, 'r:')
-            ax_b.set_yticklabels([])
-            ax[2].set_ylim([0., max(1.0, np.max(P[1,:]/1e18))])
-
-            ax[3].plot(time*1000., Current, label='Eff. $I_d$')
-            ax[3].plot(time*1000., CurrentDensity*A0, label='$I_d = A_0 e (\Gamma_i - \Gamma_e)$')
-            ax[3].set_ylabel('$I_d$ [A]', fontsize=axisfontsize)
-            ax[3].set_xlabel('$t$ [ms]', fontsize=axisfontsize)
-            ax[3].plot([time[i_save]*1000., time[i_save]*1000.],
-                    [Current[i_save], CurrentDensity[i_save]*A0],
-                    'ko', markersize=5)
-            ax[3].yaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
-            ax[3].xaxis.set_tick_params(size=5, width=1.5, labelsize=tickfontsize)
-            ax[3].legend(fontsize=tickfontsize)
-            ax[3].set_ylim([0., max(10.0, 1.1*Current.max())])
-            
-            ax_b=ax[4].twinx()
-            ax[4].plot(x_center*100, P[3,:])
-            ax[4].set_ylabel('$T_e$ [eV]', fontsize=axisfontsize)
-            ax[4].set_xticklabels([])
-            ax[4].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[4].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax_b.plot(x_center*100, B, 'r:')
-            ax_b.set_yticklabels([])
-
-            ax_b=ax[5].twinx()
-            ax[5].plot(x_center*100, P[2,:]/1000, label="$v_i$")
-            ax[5].plot(x_center*100, np.sqrt(phy_const.e*P[3,:]/(131.293*phy_const.m_u))/1000.,'g--', label="$v_{Bohm}$")
-            ax[5].set_ylabel('$v_i$ [km/s]', fontsize=axisfontsize)
-            ax[5].set_xticklabels([])
-            ax[5].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[5].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax_b.plot(x_center*100, B, 'r:')
-            ax_b.set_yticklabels([])
-            ax[5].legend(fontsize=tickfontsize)
-
-            ax_b = ax[6].twinx()
-            ax[6].plot(x_center*100, P[4,:]/1000)
-            ax[6].set_ylabel('$v_e$ [km/s]', fontsize=axisfontsize)
-            ax[6].set_xticklabels([])
-            ax[6].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[6].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax_b.plot(x_center*100, B, 'r:')
-            ax_b.set_yticklabels([])
-
-            j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
-            ax_b = ax[7].twinx()
-            ax[7].plot(x_center*100, j_of_x)
-            ax[7].set_ylabel('$J_d$ [A.m$^{-2}$]', fontsize=axisfontsize)
-            ax[7].set_xlabel('$x$ [cm]', fontsize=axisfontsize)
-            ax[7].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[7].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
-            ax[7].set_ylim([0.,max(800., 1.1*j_of_x.max())])
-            ax_b.plot(x_center*100, B, 'r:')
-            ax_b.set_yticklabels([])
-
-            title = 'time = '+ str(round(t/1e-6, 4))+'$\mu$s'
-            f.suptitle(title)
-
-            for axis in ax:
-                axis.grid(True)
-                
-            plt.tight_layout()
-
-            #plt.subplots_adjust(wspace = 0.4, hspace=0.2)
-            
-            plt.savefig(ResultsFigs+"/MacroscopicVars_New_"+str(i_save)+".png", bbox_inches='tight')
-            plt.close()
+        #plt.subplots_adjust(wspace = 0.4, hspace=0.2)
+        
+        plt.savefig(ResultsFigs+"/MacroscopicVars_New_"+str(i_save)+".png", bbox_inches='tight')
+        plt.close()
         
 
     os.system("ffmpeg -r 10 -i "+ResultsFigs+"/MacroscopicVars_New_%d.png -vcodec mpeg4 -y -vb 20M "+ResultsFigs+"Evolution.mp4")

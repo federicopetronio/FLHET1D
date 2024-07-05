@@ -370,6 +370,8 @@ def heatFlux(fP, fS, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2
     return delta_T_min
 
     #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy in Joule
+
+
 @njit
 def TDMA(a,b,c,d):      # Thomas algorithm for the implicit solver a = Lower Diag, b = Main Diag, c = Upper Diag, d = solution vector
     n = len(d)

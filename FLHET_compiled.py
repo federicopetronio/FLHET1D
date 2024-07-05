@@ -11,6 +11,8 @@ from numba import njit
 import time as ttime
 import glob
 
+from modules.simu_params import SimuParameters
+
 #########################################################
 # We solve for a system of equations written as
 # dU/dt + dF/dx = S
@@ -44,7 +46,7 @@ import glob
 #           CONFIGURE PHYSICAL PARAMETERS
 ##########################################################
 
-def GetImposedB(fx_center, fBMAX, fB0, fBLX, fLX, fLTHR, fLB1, fLB2):
+def compute_B_array(fx_center, fBMAX, fB0, fBLX, fLX, fLTHR, fLB1, fLB2):
 
     a1 = (fBMAX - fB0)/(1 - math.exp(-fLTHR**2/(2*fLB1**2)))
     a2 = (fBMAX - fBLX)/(1 - math.exp(-(fLX - fLTHR)**2/(2*fLB2**2)))
@@ -57,6 +59,29 @@ def GetImposedB(fx_center, fBMAX, fB0, fBLX, fLX, fLTHR, fLB1, fLB2):
 
     return Barr
 
+
+def compute_alphaB_array(fxcenter, falphaB1, falphaB2, fLTHR, fNBPOINTS_INIT):
+
+    NBPOINTS = fxcenter.shape[0]
+    alpha_B = (np.ones(NBPOINTS) * falphaB1)  # Anomalous transport coefficient inside the thruster
+    alpha_B = np.where(fxcenter < fLTHR, alpha_B, falphaB2)  # Anomalous transport coefficient in the plume
+    alpha_B_smooth = np.copy(alpha_B)
+
+    # smooth between alpha_B1 and alpha_B2
+    nsmooth_o2 = fNBPOINTS_INIT//20
+    for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2+1)):
+        alpha_B_smooth[index] = np.mean(alpha_B[ index-nsmooth_o2 : index+(nsmooth_o2+1) ])
+    
+    return alpha_B_smooth
+
+
+@njit
+def compute_imposed_Siz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2):
+    xm = (fLSIZ1 + fLSIZ2)/2
+    Siz = fSIZMAX*np.cos(math.pi*(fx_center - xm)/(fLSIZ2 - fLSIZ1))
+    Siz = np.where((fx_center < fLSIZ1)|(fx_center > fLSIZ2), 0., Siz)
+
+    return Siz
 
 ##########################################################
 #           Formulas defining our model                  #
@@ -87,15 +112,6 @@ def InviscidFlux(fP, fF, fVG, fMi):
         fMi* fP[1, :] * fP[2, :] * fP[2, :] + fP[1, :] * phy_const.e * fP[3, :]
     )  # M*n_i*v_i**2 + p_e
     fF[3, :] = 5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :] * fP[4, :]  # 5/2n_i*e*T_e*v_e
-
-
-@njit
-def GetImposedSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2):
-    xm = (fLSIZ1 + fLSIZ2)/2
-    Siz = fSIZMAX*np.cos(math.pi*(fx_center - xm)/(fLSIZ2 - fLSIZ1))
-    Siz = np.where((fx_center < fLSIZ1)|(fx_center > fLSIZ2), 0., Siz)
-
-    return Siz
 
 
 def CompareIonizationTypes(fx_center, fP, fSIZMAX, fLSIZ1, fLSIZ2):
@@ -148,7 +164,7 @@ def InitNeutralDensity(fx_center, fng_cathode, fVG, fP, fisSourceImposed, fSIZMA
     ni = fP[1,:]
     Te = fP[3,:]
     if fisSourceImposed:
-        Siz_arr = GetImposedSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
+        Siz_arr = compute_imposed_Siz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
         dx_temp = (fx_center[-1] - fx_center[0])/(fx_center.shape[0] - 1)
         ng_init = fng_cathode - (1/fVG)*CumTrapz(Siz_arr, dx_temp)
         #ng_init = fng_cathode - (1/fVG)*IntegralSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
@@ -198,7 +214,7 @@ def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center,
 
 
 @njit
-def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fSIZMAX, fLSIZ1, fLSIZ2, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
+def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -225,7 +241,7 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
         Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
         Siz_arr = ng*ni*Kiz
     else:
-        Siz_arr = GetImposedSiz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
+        Siz_arr = fimposed_Siz
 
     # If ionization collision are considered in the momentum and energy equations.
     if fenableIonColl:
@@ -860,7 +876,7 @@ def main(fconfigFile):
     Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
     Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])    
 
-    Barr = GetImposedB(x_center, BMAX, B0, BLX, LX, LTHR, LB1, LB2)
+    Barr = compute_B_array(x_center, BMAX, B0, BLX, LX, LTHR, LB1, LB2)
     alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
     alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
     alpha_B_smooth = np.copy(alpha_B)
@@ -1291,6 +1307,481 @@ def main(fconfigFile):
     print("Exec time = {:.2f} s".format(ttime_end - tttime_start))
 
 
+def main_test_SimuParams(fconfigfile):
+
+    tttime_start = ttime.time()
+
+    msp = SimuParameters(fconfigfile)
+
+    ### Renames th variables for more clarity
+
+    Resultsdir  = msp.Results
+    MDOT    = msp.MDOT
+    Mi      = msp.Mi
+    A0      = msp.A0
+    VG      = msp.VG
+    NI0     = msp.NI0
+    TE0     = msp.TE0
+    ESTAR   = msp.ESTAR
+    wall_inter_type     = msp.wall_inter_type
+    R1      = msp.R1
+    R2      = msp.R2
+    LTHR    = msp.LTHR
+    KEL     = msp.KEL
+    TIMESCHEME  = msp.TIMESCHEME
+    TIMEFINAL   = msp.TIMEFINAL
+    SAVERATE    = msp.SAVERATE
+    boolIonColl = msp.boolIonColl
+    boolSizImposed  = msp.boolSizImposed
+    Rext        = msp.Rext
+    Te_Cath     = msp.Te_Cath
+    CFL         = msp.CFL
+    HEATFLUX    = msp.HEATFLUX
+    IMPlICIT    = msp.IMPlICIT
+    boolCircuit = msp.Circuit
+    V           = msp.V
+
+
+    if not os.path.exists(Resultsdir):
+        os.makedirs(Resultsdir)
+    msp.save_config_file("Configuration.cfg")
+
+
+    # delete current data in location:
+    list_of_res_files = glob.glob(msp.Results+"/Data/MacroscopicVars_*.pkl")
+    for filenametemp in list_of_res_files:
+        os.remove(filenametemp)
+    if len(list_of_res_files) > 0:
+        print("Warning: all MacroscopicVars_<i>.pkl files in the "+Resultsdir+" location were deleted to welcome new data.")
+
+
+    ##########################################################
+    #           Allocation of large vectors                  #
+    ##########################################################
+
+    Delta_t = 1.0  # Initialization of Delta_t (do not change)
+    # Delta_x = LX / NBPOINTS
+
+    x_mesh, x_center, Delta_x, x_center_extended, Delta_x_extended = msp.return_tiled_domain()
+    NBPOINTS = np.shape(x_center)[0]
+
+    Barr = compute_B_array(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
+
+    alpha_B1, alpha_B2  = msp.extract_anomalous()
+    alpha_B = compute_alphaB_array(x_center, alpha_B1, alpha_B2, LTHR, msp.NBPOINTS_INIT)
+
+    # Allocation of vectors
+    P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
+    U = np.ones((4, NBPOINTS))  # Conservative vars U = [rhog, rhoi, rhoUi, 3/2 ne*e*Te]
+    S = np.ones((4, NBPOINTS))  # Source Term
+    F_cell = np.ones((4, NBPOINTS + 2))  # Flux at the cell center. We include the Flux of the Ghost cells
+    F_interf = np.ones((4, NBPOINTS + 1))  # Flux at the interface
+    U_Inlet = np.ones((4, 1))  # Ghost cell on the left
+    P_Inlet = np.ones((5, 1))  # Ghost cell on the left
+    U_Outlet = np.ones((4, 1))  # Ghost cell on the right
+    P_Outlet = np.ones((5, 1))  # Ghost cell on the right
+
+    if msp.TIMESCHEME == "TVDRK3":
+        P_1 = np.ones(
+            (5, NBPOINTS)
+        )  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
+        U_1 = np.ones((4, NBPOINTS))  # Conservative vars U = [rhog, rhoi, rhoUi,
+
+    if msp.Circuit:
+        R = msp.R
+        L = msp.L
+        C = msp.C
+        V0 = msp.V
+        print(f"~~~~~~~~~~~~~~~~ Circuit: R = {R:.2e} Ohm")
+        print(f"~~~~~~~~~~~~~~~~ Circuit: L = {L:.2e} H")
+        print(f"~~~~~~~~~~~~~~~~ Circuit: C = {C:.2e} F")
+
+        X_Volt0 = np.zeros(2)  # [DeltaV, dDeltaV/dt]
+        X_Volt1 = np.zeros(2)
+        X_Volt2 = np.zeros(2)
+        X_Volt3 = np.zeros(2)
+
+        RHS_Volt0 = np.zeros(2)
+        RHS_Volt1 = np.zeros(2)
+        RHS_Volt2 = np.zeros(2)
+
+        A_Volt = np.zeros([2, 2])
+        A_Volt[0, 0] = 0.0
+        A_Volt[0, 1] = 1.0
+        A_Volt[1, 1] = -1 / (L * C)
+        A_Volt[1, 0] = -1 / (R * C)
+
+        dJdt = 0.0
+        J0 = 0.0
+
+    i_save = 0
+    time = 0.0
+    iter = 0
+    J = 0.0  # Initial Current
+
+    imposed_Siz = compute_imposed_Siz(x_center, msp.SIZMAX, msp.LSIZ1, msp.LSIZ2)
+
+    # We initialize the primitive variables
+    ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
+    P[1, :] *= NI0  # Initial ni
+    P[2, :] *= 0.0  # Initial vi
+    P[3, :] *= TE0  # Initial Te
+    # P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
+    P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
+    #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+    ### Warning, in the code currently, neutrals dyanmic is canceled.
+    P[0,:] = ng_anode
+
+    # compute mu to check whether or not similitude B scaling works.
+    mu_eff_arr = compute_mu(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+    print(f"Checking mu value [m^2 s^-1 V^-1]. Bmax = {msp.BMAX*10000:.0f}\talpha_B1 = {alpha_B1:.4e}\talpha_B2 = {alpha_B2:.4e}")
+    #print(mu_eff_arr)
+    print(f"\tMean value over domain space  {np.mean(mu_eff_arr):.6e}")
+    print(f"\tStd deviation:                {np.std(mu_eff_arr):.6e}")
+
+    # We initialize the conservative variables
+    PrimToCons(P, U, Mi)
+
+
+    ##########################################################################################
+    #           Loop with Forward Euler                                                      #
+    #           U^{n+1}_j = U^{n}_j - Dt/Dx(F^n_{j+1/2} - F^n_{j-1/2}) + Dt S^n_j            #
+    ##########################################################################################
+
+    if TIMESCHEME == "Forward Euler":
+        J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+        while time < TIMEFINAL:
+            # Save results
+            if (iter % SAVERATE) == 0:
+                SaveResults(Resultsdir, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+                i_save += 1
+                print(
+                    "Iter = ",
+                    iter,
+                    "\tTime = {:.2f}~µs".format(time / 1e-6),
+                    "\tI = {:.4f}~A".format(J),
+                    "\tJ = {:.3e} A/m2".format(J/A0),
+                )
+                # Another way of processing J_d which is equivalent to J_d = I / A0
+                #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+                #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
+                #print("J processed another way = {:.3e} A/m2".format(mean_j)) 
+            # Set the boundaries
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 1)
+            SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
+
+            # Compute the Fluxes in the center of the cell
+            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+
+            # Compute the convective Delta t
+            Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+            #print(Delta_t)
+            # Compute the Numerical at the interfaces
+            NumericalFlux(
+                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
+                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                F_cell,
+                F_interf,
+                NBPOINTS,
+                Mi,
+                VG,
+            )
+
+            # Compute the source in the center of the cell
+            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            if HEATFLUX and not IMPlICIT:
+                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                Delta_t = min(dt_HF, Delta_t)
+            if HEATFLUX and IMPlICIT:
+                dt_HF = Delta_t
+                Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                print(Te)
+            
+
+
+            # Update the solution
+            U[:, :] = (
+                U[:, :]
+                - Delta_t
+                / Delta_x
+                * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+                + Delta_t * S[:, :]
+            )
+            # Prevent the energy to be strictly negative
+            U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
+
+            # Compute the current
+            J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+
+            # Compute the primitive vars for next step
+            ConsToPrim(U, P, Mi, A0, J)
+
+            time += Delta_t
+            iter += 1
+
+    if TIMESCHEME == "TVDRK3":
+
+        while time < TIMEFINAL:
+            # Save results
+            if (iter % SAVERATE) == 0:
+                SaveResults(Resultsdir, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+                i_save += 1
+                print(
+                    "Iter = ",
+                    iter,
+                    "\tTime = {:.2f}~µs".format(time / 1e-6),
+                    "\tI = {:.4f}~A".format(J),
+                    "\tJ = {:.3e} A/m2".format(J/A0),
+                )
+                # Another way of processing J_d which is equivalent to J_d = I / A0
+                #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+                #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
+                #print("J processed another way = {:.3e} A/m2".format(mean_j))
+                #CompareIonizationTypes(x_center, P)
+
+            #################################################
+            #           FIRST STEP RK3
+            #################################################
+
+            # Copy the solution to store it
+            U_1[:, :] = U[:, :]
+            ConsToPrim(U_1, P_1, Mi, A0, J)
+            J_1 = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            ConsToPrim(U_1, P_1, Mi, A0, J_1)
+
+            # Set the boundaries
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J)
+            SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+            # Compute the Fluxes in the center of the cell
+            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+            # Compute the convective Delta t (Only in the first step)
+            Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+            if iter == 0:
+                Delta_t = Delta_t/3
+            # Compute the Numerical at the interfaces
+            NumericalFlux(
+                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
+                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                F_cell,
+                F_interf,
+                NBPOINTS,
+                Mi,
+                VG
+            )
+
+            # Compute the source in the center of the cell
+            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+
+            if HEATFLUX and not IMPlICIT:
+                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                Delta_t = min(dt_HF, Delta_t)
+            # First half step of strang-splitting
+            if HEATFLUX and IMPlICIT:
+                dt_HF = Delta_t
+                P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+            
+            if iter == 0:
+                Delta_t = Delta_t/3
+
+
+            # Update the solution
+            U[:, :] = (
+                U[:, :]
+                - Delta_t
+                / Delta_x
+                * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+                + Delta_t * S[:, :]
+            )
+            
+            # Prevent the energy to be strictly negative
+            U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
+
+            # Compute the current
+            J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+
+            # Compute the primitive vars for next step
+            ConsToPrim(U, P, Mi, A0, J)
+
+            # Compute RLC boolCircuit
+            if boolCircuit:
+                dJdt = (J - J0) / Delta_t
+
+                RHS_Volt0[0] = X_Volt0[1]
+                RHS_Volt0[1] = (
+                    -1 / (R * C) * X_Volt0[1] - 1.0 / (L * C) * X_Volt0[0] + 1 / C * dJdt
+                )
+                X_Volt1 = X_Volt0 + Delta_t * RHS_Volt0
+
+            #################################################
+            #           SECOND STEP RK3
+            #################################################
+            # Set the boundaries
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 2)
+            SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+
+            # Compute the Fluxes in the center of the cell
+            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+
+            # Compute the Numerical at the interfaces
+            NumericalFlux(
+                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
+                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                F_cell,
+                F_interf,
+                NBPOINTS,
+                Mi,
+                VG
+            )
+
+            # Compute the source in the center of the cell
+            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            if HEATFLUX and not IMPlICIT:
+                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+               
+
+            # Update the solution
+            U[:, :] = (
+                0.75 * U_1[:, :]
+                + 0.25 * U[:, :]
+                + 0.25
+                * (
+                    -Delta_t
+                    / Delta_x
+                    * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+                    + Delta_t * S[:, :]
+                )
+            )
+
+            # Prevent the energy to be strictly negative
+            U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
+
+            # Compute the current
+            J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+
+            # Compute the primitive vars for next step
+            ConsToPrim(U, P, Mi, A0, J)
+
+            # Compute RLC Circuit
+            if boolCircuit:
+                dJdt = (J - J0) / Delta_t
+                RHS_Volt1[0] = X_Volt1[1]
+                RHS_Volt1[1] = (
+                    -1 / (R * C) * X_Volt1[1] - 1.0 / (L * C) * X_Volt1[0] + 1 / C * dJdt
+                )
+                X_Volt2 = 0.75 * X_Volt0 + 0.25 * X_Volt1 + 0.25 * Delta_t * RHS_Volt1
+
+            #################################################
+            #           THIRD STEP RK3
+            #################################################
+            # Set the boundaries
+            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
+            SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
+
+            # Compute the Fluxes in the center of the cell
+            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+
+            # Compute the Numerical at the interfaces
+            NumericalFlux(
+                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
+                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                F_cell,
+                F_interf,
+                NBPOINTS,
+                Mi,
+                VG
+            )
+            # Compute the source in the center of the cell
+            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            if HEATFLUX and not IMPlICIT:
+                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+
+            # Update the solution
+            U[:, :] = (
+                1.0 / 3.0 * U_1[:, :]
+                + 2.0 / 3.0 * U[:, :]
+                + 2.0
+                / 3.0
+                * (
+                    -Delta_t
+                    / Delta_x
+                    * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+                    + Delta_t * S[:, :]
+                )
+            )
+            # Second half step of strang-splitting
+            if HEATFLUX and IMPlICIT:
+                SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
+                SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+                P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
+                U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+            # Prevent the energy to be strictly negative
+            U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
+
+            # Compute the current
+            J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+
+            # Compute the primitive vars for next step
+            ConsToPrim(U, P, Mi, A0, J)
+
+            # Compute RLC Circuit
+            if boolCircuit:
+                dJdt = (J - J0) / Delta_t
+                RHS_Volt2[0] = X_Volt2[1]
+                RHS_Volt2[1] = (
+                    -1 / (R * C) * X_Volt2[1] - 1.0 / (L * C) * X_Volt2[0] + 1 / C * dJdt
+                )
+                X_Volt3 = (
+                    1.0 / 3.0 * X_Volt0
+                    + 2.0 / 3.0 * X_Volt2
+                    + 2.0 / 3.0 * Delta_t * RHS_Volt2
+                )
+
+                # Reinitialize for the Circuit
+                J0 = J
+                X_Volt0[:] = X_Volt3[:]
+
+                # Change the Voltage
+                V = V0 - X_Volt0[0]
+            time += Delta_t
+            if (iter %SAVERATE) ==0:
+                filename = Resultsdir + "/time_vec_njit.dat"
+                ttime_intermediate = ttime.time()
+                a_str = " ".join(map(str, [iter, ttime_intermediate - tttime_start]))
+                if iter == 0 and os.path.exists(filename):
+                    os.remove(filename)
+                    print("File removed:" + filename)
+                if os.path.exists(filename):
+                    with open(filename, 'a') as file:
+                        file.write(a_str)
+                        file.write("\n")  # Add a newline at the end (optional)
+                else:
+                    with open(filename, 'w') as file:
+                        file.write(a_str)
+                        file.write("\n")  # Add a newline at the end (optional)
+            iter += 1
+    # Saves the last frame
+    SaveResults(Resultsdir, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+    i_save += 1
+    print(
+        "Iter = ",
+        iter,
+        "\tTime = {:.2f}~µs".format(time / 1e-6),
+        "\tI = {:.4f}~A".format(J),
+        "\tJ = {:.3e} A/m2".format(J/A0),
+    )
+    # Another way of processing J_d which is equivalent to J_d = I / A0
+    #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
+    #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
+    #print("J processed another way = {:.3e} A/m2".format(mean_j))
+
+
+    ttime_end = ttime.time()
+    print("Exec time = {:.2f} s".format(ttime_end - tttime_start))
+
+
 def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
     tttime_start = ttime.time()
@@ -1429,7 +1920,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
     Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])    
 
-    Barr = GetImposedB(x_center, BMAX, B0, BLX, LX, LTHR, LB1, LB2)
+    Barr = compute_B_array(x_center, BMAX, B0, BLX, LX, LTHR, LB1, LB2)
 
     nalphaB1 = falpha_B1_arr.shape[0]
     nalphaB2 = falpha_B2_arr.shape[0]
@@ -1810,7 +2301,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
 
 if __name__ == '__main__':
-    main('configuration_Charoy.ini')
+    main_test_SimuParams('configuration_Charoy.ini')
 
     """    nalpha = 20
     alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel

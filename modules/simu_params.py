@@ -95,7 +95,10 @@ class SimuParameters():
         NumericsConfig = config["Numerical Parameteres"]
 
         self.NBPOINTS_INIT = int(NumericsConfig["Number of points"])  # Number of cells
-        self.SAVERATE = int(NumericsConfig["Save rate"])  # Rate at which we store the data
+        try:
+            self.SAVERATE = int(NumericsConfig["Save rate"])  # Rate at which we store the data
+        except KeyError:
+            self.SAVERATE = -1
         self.CFL = float(NumericsConfig["CFL"])  # Nondimensional size of the time step
         self.TIMEFINAL = float(NumericsConfig["Final time"])  # Last time of simulation
         self.Results = NumericsConfig["Result dir"]  # Name of result directory

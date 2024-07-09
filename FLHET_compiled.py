@@ -10,6 +10,7 @@ import sys
 from numba import njit
 import time as ttime
 import glob
+import scipy.interpolate as interpolate
 
 from modules.simu_params import SimuParameters
 
@@ -749,6 +750,7 @@ def main(fconfigfile):
     wall_inter_type     = msp.wall_inter_type
     R1      = msp.R1
     R2      = msp.R2
+    LX  = msp.LX
     LTHR    = msp.LTHR
     KEL     = msp.KEL
     TIMESCHEME  = msp.TIMESCHEME
@@ -763,7 +765,9 @@ def main(fconfigfile):
     IMPlICIT    = msp.IMPlICIT
     boolCircuit = msp.Circuit
     V           = msp.V
-
+    START_FROM_INPUT  = msp.START_FROM_INPUT
+    if START_FROM_INPUT:
+        INPUT_DIR  = msp.INPUT_DIR
 
     if not os.path.exists(Resultsdir):
         os.makedirs(Resultsdir)
@@ -804,6 +808,58 @@ def main(fconfigfile):
     U_Outlet = np.ones((4, 1))  # Ghost cell on the right
     P_Outlet = np.ones((5, 1))  # Ghost cell on the right
 
+    if START_FROM_INPUT:
+
+        list_of_pkls = glob.glob(INPUT_DIR+"/MacroscopicVars*.pkl")
+        assert(len(list_of_pkls) == 1)
+        INPUT_FILE  = list_of_pkls[0]
+        print("Simulation starts from the profiles stored in ", INPUT_FILE)
+
+        with open(INPUT_FILE, 'rb') as f:
+            [t_INIT, P_INIT, U_INIT, P_Inlet_INIT, P_Outlet_INIT, J_INIT, V_INIT, B_INIT, x_center_INIT] = pickle.load(f)
+
+        NBPOINTS_initialField = P_INIT.shape[1]
+        #Delta_x_initialField  = LX/NBPOINTS_initialField
+        x_mesh_initialField   = np.zeros(NBPOINTS_initialField+1, dtype=float) # Mesh in the interface
+        x_mesh_initialField[1:-1]   = 0.5*(x_center_INIT[:-1] + x_center_INIT[1:])
+        x_mesh_initialField[-1]     = LX
+        #x_center_initialField = np.linspace(Delta_x_initialField, LX - Delta_x_initialField, NBPOINTS_initialField)     # Mesh in the center of cell
+
+            # intégration de la fonction INITIAL field en cours.
+        P0_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[0,:], fill_value=(P_INIT[0,0], P_INIT[0,-1]), bounds_error=False)
+        P1_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[1,:], fill_value=(P_INIT[1,0], P_INIT[1,-1]), bounds_error=False)
+        P2_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[2,:], fill_value=(P_INIT[2,0], P_INIT[2,-1]), bounds_error=False)
+        P3_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[3,:], fill_value=(P_INIT[3,0], P_INIT[3,-1]), bounds_error=False)
+        P4_INTERP = interpolate.interp1d(x_center_INIT, P_INIT[4,:], fill_value=(P_INIT[4,0], P_INIT[4,-1]), bounds_error=False)
+
+        # We initialize the primitive variables
+        P[0,:] = P0_INTERP(x_center)                           # Initial propellant density ng TODO
+        P[1,:] = P1_INTERP(x_center)                           # Initial ni
+        P[2,:] = P2_INTERP(x_center)                           # Initial vi
+        P[3,:] = P3_INTERP(x_center)                           # Initial Te
+        P[4,:] = P4_INTERP(x_center)                           # Initial Ve
+
+        Jm1 = J_INIT
+        J   = J_INIT
+        
+        del t_INIT, P_INIT, U_INIT, P_Inlet_INIT, P_Outlet_INIT, J_INIT, V_INIT, B_INIT , x_center_INIT, P0_INTERP, P1_INTERP, P2_INTERP, P3_INTERP, P4_INTERP
+
+    else:
+
+        # We initialize the primitive variables
+        ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
+        #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, ionization_type, SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+        ### Warning, in the code currently, neutrals dyanmic is canceled.
+        P[0,:] = ng_anode
+        P[1, :] = msp.NI0  # Initial ni
+        P[2, :] = 0.0  # Initial vi
+        P[3, :] = msp.TE0  # Initial Te
+        P[3, :] = SmoothInitialTemperature(P[3, :], Te_Cath)
+        P[4, :] = 0.0
+
+        Jm1 = 0.
+        J = 0.0  # Initial Current
+
     if msp.TIMESCHEME == "TVDRK3":
         P_1 = np.ones(
             (5, NBPOINTS)
@@ -835,25 +891,14 @@ def main(fconfigfile):
         A_Volt[1, 0] = -1 / (R * C)
 
         dJdt = 0.0
-        J0 = 0.0
+
 
     i_save = 0
     time = 0.0
     iter = 0
-    J = 0.0  # Initial Current
+
 
     imposed_Siz = compute_imposed_Siz(x_center, msp.SIZMAX, msp.LSIZ1, msp.LSIZ2)
-
-    # We initialize the primitive variables
-    ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
-    P[1, :] *= NI0  # Initial ni
-    P[2, :] *= 0.0  # Initial vi
-    P[3, :] *= TE0  # Initial Te
-    # P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
-    P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
-    #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
-    ### Warning, in the code currently, neutrals dyanmic is canceled.
-    P[0,:] = ng_anode
 
     # compute mu to check whether or not similitude B scaling works.
     mu_eff_arr = compute_mu(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
@@ -1029,7 +1074,7 @@ def main(fconfigfile):
 
             # Compute RLC boolCircuit
             if boolCircuit:
-                dJdt = (J - J0) / Delta_t
+                dJdt = (J - Jm1) / Delta_t
 
                 RHS_Volt0[0] = X_Volt0[1]
                 RHS_Volt0[1] = (
@@ -1088,7 +1133,7 @@ def main(fconfigfile):
 
             # Compute RLC Circuit
             if boolCircuit:
-                dJdt = (J - J0) / Delta_t
+                dJdt = (J - Jm1) / Delta_t
                 RHS_Volt1[0] = X_Volt1[1]
                 RHS_Volt1[1] = (
                     -1 / (R * C) * X_Volt1[1] - 1.0 / (L * C) * X_Volt1[0] + 1 / C * dJdt
@@ -1151,7 +1196,7 @@ def main(fconfigfile):
 
             # Compute RLC Circuit
             if boolCircuit:
-                dJdt = (J - J0) / Delta_t
+                dJdt = (J - Jm1) / Delta_t
                 RHS_Volt2[0] = X_Volt2[1]
                 RHS_Volt2[1] = (
                     -1 / (R * C) * X_Volt2[1] - 1.0 / (L * C) * X_Volt2[0] + 1 / C * dJdt
@@ -1163,7 +1208,7 @@ def main(fconfigfile):
                 )
 
                 # Reinitialize for the Circuit
-                J0 = J
+                Jm1 = J
                 X_Volt0[:] = X_Volt3[:]
 
                 # Change the Voltage
@@ -1319,7 +1364,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                 A_Volt[1, 0] = -1 / (R * C)
 
                 dJdt = 0.0
-                J0 = 0.0
+                Jm1 = 0.0
 
             time = 0.0
             iter = 0
@@ -1473,7 +1518,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute RLC Circuit
                     if boolCircuit:
-                        dJdt = (J - J0) / Delta_t
+                        dJdt = (J - Jm1) / Delta_t
 
                         RHS_Volt0[0] = X_Volt0[1]
                         RHS_Volt0[1] = (
@@ -1532,7 +1577,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute RLC Circuit
                     if boolCircuit:
-                        dJdt = (J - J0) / Delta_t
+                        dJdt = (J - Jm1) / Delta_t
                         RHS_Volt1[0] = X_Volt1[1]
                         RHS_Volt1[1] = (
                             -1 / (R * C) * X_Volt1[1] - 1.0 / (L * C) * X_Volt1[0] + 1 / C * dJdt
@@ -1595,7 +1640,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
                     # Compute RLC Circuit
                     if boolCircuit:
-                        dJdt = (J - J0) / Delta_t
+                        dJdt = (J - Jm1) / Delta_t
                         RHS_Volt2[0] = X_Volt2[1]
                         RHS_Volt2[1] = (
                             -1 / (R * C) * X_Volt2[1] - 1.0 / (L * C) * X_Volt2[0] + 1 / C * dJdt
@@ -1607,7 +1652,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         )
 
                         # Reinitialize for the Circuit
-                        J0 = J
+                        Jm1 = J
                         X_Volt0[:] = X_Volt3[:]
 
                         # Change the Voltage
@@ -1629,14 +1674,16 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
 
 
 if __name__ == '__main__':
-    main('configuration_Charoy.ini')
+
+    main(sys.argv[1])
 
     """    nalpha = 20
     alpha_B1_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
     alpha_B2_arr = np.linspace(-4, -1, nalpha) # range of anomalous coeffs. in the channel
     alpha_B1_arr = 10**alpha_B1_arr
     alpha_B2_arr = 10**alpha_B2_arr
-    """
+    
     #alpha_B1_arr = np.array([3.7927e-3])
     #alpha_B2_arr = np.array([7.8476e-3, 1.1288e-2])
     #main_alphaB_param_study('config_alphaB_prm_study.ini', alpha_B1_arr, alpha_B2_arr)
+    """

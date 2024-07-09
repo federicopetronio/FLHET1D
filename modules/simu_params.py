@@ -116,7 +116,7 @@ class SimuParameters():
         self.START_FROM_INPUT = bool(
             config.getboolean("Numerical Parameteres", "Start from input profiles", fallback=False) )
         if self.START_FROM_INPUT:
-            self.INPUT_FILE = NumericsConfig["Input profiles file"]
+            self.INPUT_DIR = NumericsConfig["Input profiles directory"]
 
 
     def save_config_file(self, filename):

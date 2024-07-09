@@ -25,3 +25,5 @@ Results/
 LPP1D_dl_20240328.pdf
 # ignore the __pycache__ directory
 __pycache__
+
+configuration_local.ini

@@ -88,7 +88,7 @@ if MagneticFieldConfig["Type"] == "Default":
 ##########################################################
 #           NUMERICAL PARAMETERS
 ##########################################################
-NumericsConfig = config["Numerical Parameteres"]
+NumericsConfig = config["Numerical Parameters"]
 
 NBPOINTS = int(NumericsConfig["Number of points"])  # Number of cells
 SAVERATE = int(NumericsConfig["Save rate"])  # Rate at which we store the data
@@ -96,6 +96,7 @@ CFL = float(NumericsConfig["CFL"])  # Nondimensional size of the time step
 TIMEFINAL = float(NumericsConfig["Final time"])  # Last time of simulation
 Results = NumericsConfig["Result dir"]  # Name of result directory
 TIMESCHEME = NumericsConfig["Time integration"]  # Time integration scheme
+AlphaModel = NumericsConfig['Anomalous transport model']        # Model chosen for the anomalous transport
 
 if not os.path.exists(Results):
     os.makedirs(Results)
@@ -113,14 +114,8 @@ x_mesh = np.linspace(0, LENGTH, NBPOINTS + 1)  # Mesh in the interface
 x_center = np.linspace(Delta_x, LENGTH - Delta_x, NBPOINTS)  # Mesh in the center of cell
 B0 = Bmax * np.exp(-(((x_center - L0) / LB1) ** 2.0))  # Magnetic field within the thruster
 B0 = np.where(x_center < L0, B0, Bmax * np.exp(-(((x_center - L0) / LB2) ** 2.0)))  # Magnetic field outside the thruster
-alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
-alpha_B = np.where(x_center < L0, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
-alpha_B_smooth = np.copy(alpha_B)
 
-# smooth between alpha_B1 and alpha_B2
-for index in range(10, NBPOINTS - 9):
-    alpha_B_smooth[index] = np.mean(alpha_B[index-10:index+10])
-alpha_B = alpha_B_smooth
+
 
 # Allocation of vectors
 P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
@@ -165,6 +160,32 @@ if Circuit:
     dJdt = 0.0
     J0 = 0.0
 
+##########################################################
+#      Definition of the anomalous transport model       #
+##########################################################
+
+if AlphaModel == 'Step' :
+    alpha_B  = np.ones(NBPOINTS)*alpha_B1                            # Anomalous transport coefficient inside the thruster
+    alpha_B  = np.where(x_center < L0, alpha_B, alpha_B2)         # Anomalous transport coefficient in the plume
+elif AlphaModel == 'Linear' :
+    alpha_B = []
+    for i in range(len(x_center)) :
+        alpha_B.append(((alpha_B2-alpha_B1)/LENGTH)*x_center[i]+alpha_B1)
+elif AlphaModel == 'Capelli' :                     # We treat other cases lowers, as they deal with nu_an instaed of a vector alpha_B
+    pass
+elif AlphaModel == 'Lafleur' :
+    pass
+elif AlphaModel == 'Chodura' :
+    pass
+elif AlphaModel == 'Data-driven' :
+     pass
+    
+alpha_B_smooth = np.copy(alpha_B)
+
+# smooth between alpha_B1 and alpha_B2
+for index in range(10, NBPOINTS - 9):
+    alpha_B_smooth[index] = np.mean(alpha_B[index-10:index+10])
+alpha_B = alpha_B_smooth
 
 ##########################################################
 #           Formulas defining our model                  #
@@ -212,7 +233,7 @@ def Source(P, S):
     energy = 3.0 / 2.0 * ni * phy_const.e * Te  # Electron internal energy
     # Gamma_E = 3./2.*ni*phy_const.e*Te*ve    # Flux of internal energy
     wce = phy_const.e * B0 / m  # electron cyclotron frequency
-
+    wce0 = np.amax(wce)
     #############################
     #       Compute the rates   #
     #############################
@@ -247,13 +268,30 @@ def Source(P, S):
     ##################################################
     #       Compute the electron properties          #
     ##################################################
+    
+    epsi0 = phy_const.epsilon_0
     phi_W = Te * np.log(np.sqrt(M / (2 * np.pi * m)) * (1 - sigma))  # Wall potential
     Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
 
     c_s = np.sqrt(phy_const.e * Te / M)  # Sound velocity
+    v_de = V/(LENGTH*B0) # Drift velocity 
+    w_pi = np.sqrt((ni*phy_const.e**2)/(M*epsi0)) # Ion plasma frquency 
+    
+    if AlphaModel == 'Capelli' : # We implement the nu_an corresponding to the model chosen
+        pass
+    elif AlphaModel == 'Lafleur' :
+        pass
+    elif AlphaModel == 'Chodura' :
+        nu_an = alpha_B1*w_pi*(1-np.exp((-v_de)/(alpha_B2*c_s)))
+    elif AlphaModel == 'Data-driven' :
+        nu_an = alpha_B1 * wce * (vi/(alpha_B2*c_s + v_de))
+    else : # For the other models, we use the alpha_B vector as defined earlier
+        nu_an = ng * Kel + alpha_B * wce
+
     nu_m = (
-        ng * Kel + alpha_B * wce + nu_ew
+         nu_an + nu_ew
     )  # Electron momentum - transfer collision frequency
+
     mu_eff = (phy_const.e / (m * nu_m)) * (
         1.0 / (1 + (wce / nu_m) ** 2)
     )  # Effective mobility
@@ -299,7 +337,7 @@ def compute_I(P, V):
     ve = P[4, :]
     Gamma_i = ni * ui
     wce = phy_const.e * B0 / m  # electron cyclotron frequency
-
+    wce0 = np.amax(wce)
     #############################
     #       Compute the rates   #
     #############################
@@ -324,8 +362,30 @@ def compute_I(P, V):
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
 
+    # We implement the anomalous transfer mobility following the model chosen
+   
+    epsi0 = phy_const.epsilon_0
+    phi_W = Te * np.log(np.sqrt(M / (2 * np.pi * m)) * (1 - sigma))  # Wall potential
+    Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
+
+    c_s = np.sqrt(phy_const.e * Te / M)  # Sound velocity
+    v_de = V/(LENGTH*B0) # Drift velocity 
+    w_pi = np.sqrt((ni*phy_const.e**2)/(M*epsi0)) # Ion plasma frquency 
+    
+    if AlphaModel == 'Capelli' : # We implement the nu_an corresponding to the model chosen
+        pass
+    elif AlphaModel == 'Lafleur' :
+        pass
+    elif AlphaModel == 'Chodura' :
+        nu_an = alpha_B1*w_pi*(1-np.exp((-v_de)/(alpha_B2*c_s)))
+    elif AlphaModel == 'Data-driven' :
+        nu_an = alpha_B1 * wce * (vi/(alpha_B2*c_s + v_de))
+    else : # For the other models, we use the alpha_B vector as defined earlier
+        nu_an = ng * Kel + alpha_B * wce0
+
+    
     nu_m = (
-        ng * Kel + alpha_B * wce + nu_ew
+         nu_an + nu_ew
     )  # Electron momentum - transfer collision frequency
 
     mu_eff = (phy_const.e / (m * nu_m)) * (
@@ -749,7 +809,7 @@ if TIMESCHEME == "TVDRK3":
             V = V0 - X_Volt0[0]
         time += Delta_t
         if (iter %SAVERATE) ==0:
-            filename = Results + "time_vec_njit.dat"
+            filename = Results + "/time_vec_njit.dat"
             ttime_intermediate = ttime.time()
             a_str = " ".join(map(str, [iter, ttime_intermediate - tttime_start]))
             if iter == 0 and os.path.exists(filename):

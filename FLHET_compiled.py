@@ -408,6 +408,7 @@ def TDMA(a,b,c,d):      # Thomas algorithm for the implicit solver a = Lower Dia
         p[i-1] = g[i-1] - w[i-1]*p[i]
     return p
 
+
 @njit
 def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fDelta_t):
 
@@ -566,27 +567,29 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
 
 
 @njit
-def SetInlet(fP_In, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA0, fVG, fTe_cath, fJ=0.0, moment=1):
+def SetInlet(fP_LeftColumn, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA0, fVG, fTe_cath, fJ=0.0, moment=1):
+    #TODO: change the Dirichlet BCs so that a fixed value s is achieved in the frontier x=0. So the ghost value must be s_g = 2*s - s[0], where s[0] is the left value of the bulk array. Currently only v_i is computed this way to achieve the Bohm velocity at the frontier. It is not the case for n_g and T_e.
+    fP_LC   = fP_LeftColumn     # renaming for more elegance 
 
-    U_Bohm = np.sqrt(phy_const.e * fP_In[3] / fMi)
+    U_Bohm = np.sqrt(phy_const.e * fP_LC[3] / fMi)
 
     if not fisSourceImposed:
-        if fP_In[1] * fP_In[2] < 0.0:
-            fU_ghost[0] = (fMDOT - fMi* fP_In[1] * fP_In[2] * fA0) / (fA0 * fVG)
+        if fP_LC[1] * fP_LC[2] < 0.0:
+            fU_ghost[0] = (fMDOT - fMi* fP_LC[1] * fP_LC[2] * fA0) / (fA0 * fVG)
         else:
             fU_ghost[0] = fMDOT / (fA0 * fVG)
 
     else:
         fU_ghost[0] = fMDOT / (fA0 * fVG)
     
-    fU_ghost[1] = fP_In[1] * fMi
-    fU_ghost[2] = -2.0 * fP_In[1] * U_Bohm* fMi - fP_In[1] * fP_In[2] * fMi
-    # fU_ghost[3] = 3.0 / 2.0 * fP_In[1] * phy_const.e * fP_In[3]
-    fU_ghost[3] = 3.0 / 2.0 * fP_In[1] * phy_const.e * fTe_cath # Test
-    # kappa_wall = phy_const.e**2 * fP_In[1] * fP_In[3] * 2.38408574e+23 # Test with only anomalous transport
+    fU_ghost[1] = fP_LC[1] * fMi
+    fU_ghost[2] = -2.0 * fP_LC[1] * U_Bohm* fMi - fP_LC[1] * fP_LC[2] * fMi     # so that 0.5*(U_ghost[2] + U_LC[2]) = - u_B * U_LC[1] 
+    # fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * fP_LC[3]
+    fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * 10.0 # Test. TODO: change so that in average, T_e = 10.0 eV. Here not the case. 
+    # kappa_wall = phy_const.e**2 * fP_LC[1] * fP_LC[3] * 2.38408574e+23 # Test with only anomalous transport
     # Delta_x = 0.000125
-    # T_Ghost = fP_In[1]*U_Bohm*(2*phy_const.e*fP_In[3])*Delta_x/kappa_wall
-    # fU_ghost[3] = 3. / 2. * fP_In[1] * phy_const.e * T_Ghost
+    # T_Ghost = fP_LC[1]*U_Bohm*(2*phy_const.e*fP_LC[3])*Delta_x/kappa_wall
+    # fU_ghost[3] = 3. / 2. * fP_LC[1] * phy_const.e * T_Ghost
     # if fU_ghost[3] < 0.1:
     #     print("WARNING: Ghost cell too cold")
     #     print( fU_ghost[3])
@@ -599,12 +602,14 @@ def SetInlet(fP_In, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA0, fVG, 
 
 
 @njit
-def SetOutlet(fP_In, fU_ghost, fP_ghost, fMi, fA0, fTe_Cath, J=0.0):
+def SetOutlet(fP_RightColumn, fU_ghost, fP_ghost, fMi, fA0, fTe_Cath, J=0.0):
+    #TODO: change the Dirichlet BCs so that a fixed value s is achieved in the frontier x=0. So the ghost value must be s_g = 2*s - s[0], where s[0] is the left value of the bulk array. It is not the case for T_e.
+    fP_RC   = fP_RightColumn    # renaming for more elegance
 
-    fU_ghost[0] = fP_In[0] * fMi
-    fU_ghost[1] = fP_In[1] * fMi
-    fU_ghost[2] = fP_In[1] * fP_In[2] * fMi
-    fU_ghost[3] = 3.0 / 2.0 * fP_In[1] * phy_const.e * fTe_Cath
+    fU_ghost[0] = fP_RC[0] * fMi
+    fU_ghost[1] = fP_RC[1] * fMi
+    fU_ghost[2] = fP_RC[1] * fP_RC[2] * fMi
+    fU_ghost[3] = 3.0 / 2.0 * fP_RC[1] * phy_const.e * fTe_Cath
 
     fP_ghost[0] = fU_ghost[0] / fMi # ng
     fP_ghost[1] = fU_ghost[1] / fMi # ni
@@ -688,7 +693,7 @@ def ComputeDelta_t(fP, fNBPOINTS, fMi, fCFL, fDelta_x):
 #                                                                                        #
 ##########################################################################################
 
-def SaveResults(fResults, fP, fU, fP_Inlet, fP_Outlet, fJ, fV, fBarr, fx_center, ftime, fi_save):
+def SaveResults(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fV, fBarr, fx_center, ftime, fi_save):
     if not os.path.exists(fResults):
         os.makedirs(fResults)
     ResultsFigs = fResults + "/Figs"
@@ -701,7 +706,7 @@ def SaveResults(fResults, fP, fU, fP_Inlet, fP_Outlet, fJ, fV, fBarr, fx_center,
     # Save the data
     filenameTemp = ResultsData + "/MacroscopicVars_" + f"{fi_save:06d}" + ".pkl"
     pickle.dump(
-        [ftime, fP, fU, fP_Inlet, fP_Outlet, fJ, fV, fBarr, fx_center], open(filenameTemp, "wb")
+        [ftime, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fV, fBarr, fx_center], open(filenameTemp, "wb")
     )  # TODO: Save the current and the electric field
 
 
@@ -803,10 +808,10 @@ def main(fconfigfile):
     S = np.ones((4, NBPOINTS))  # Source Term
     F_cell = np.ones((4, NBPOINTS + 2))  # Flux at the cell center. We include the Flux of the Ghost cells
     F_interf = np.ones((4, NBPOINTS + 1))  # Flux at the interface
-    U_Inlet = np.ones((4, 1))  # Ghost cell on the left
-    P_Inlet = np.ones((5, 1))  # Ghost cell on the left
-    U_Outlet = np.ones((4, 1))  # Ghost cell on the right
-    P_Outlet = np.ones((5, 1))  # Ghost cell on the right
+    U_LeftGhost = np.ones((4, 1))  # Ghost cell on the left
+    P_LeftGhost = np.ones((5, 1))  # Ghost cell on the left
+    U_RightGhost = np.ones((4, 1))  # Ghost cell on the right
+    P_RightGhost = np.ones((5, 1))  # Ghost cell on the right
 
     if START_FROM_INPUT:
 
@@ -816,7 +821,7 @@ def main(fconfigfile):
         print("Simulation starts from the profiles stored in ", INPUT_FILE)
 
         with open(INPUT_FILE, 'rb') as f:
-            [t_INIT, P_INIT, U_INIT, P_Inlet_INIT, P_Outlet_INIT, J_INIT, V_INIT, B_INIT, x_center_INIT] = pickle.load(f)
+            [t_INIT, P_INIT, U_INIT, P_LeftGhost_INIT, P_RightGhost_INIT, J_INIT, V_INIT, B_INIT, x_center_INIT] = pickle.load(f)
 
         NBPOINTS_initialField = P_INIT.shape[1]
         #Delta_x_initialField  = LX/NBPOINTS_initialField
@@ -842,7 +847,7 @@ def main(fconfigfile):
         Jm1 = J_INIT
         J   = J_INIT
         
-        del t_INIT, P_INIT, U_INIT, P_Inlet_INIT, P_Outlet_INIT, J_INIT, V_INIT, B_INIT , x_center_INIT, P0_INTERP, P1_INTERP, P2_INTERP, P3_INTERP, P4_INTERP
+        del t_INIT, P_INIT, U_INIT, P_LeftGhost_INIT, P_RightGhost_INIT, J_INIT, V_INIT, B_INIT , x_center_INIT, P0_INTERP, P1_INTERP, P2_INTERP, P3_INTERP, P4_INTERP
 
     else:
 
@@ -921,7 +926,7 @@ def main(fconfigfile):
         while time < TIMEFINAL:
             # Save results
             if (iter % SAVERATE) == 0:
-                SaveResults(Resultsdir, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+                SaveResults(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, V, Barr, x_center, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -935,19 +940,19 @@ def main(fconfigfile):
                 #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
                 #print("J processed another way = {:.3e} A/m2".format(mean_j)) 
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 1)
-            SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
+            SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 1)
+            SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
-            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+            InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
             # Compute the convective Delta t
-            Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+            Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
             #print(Delta_t)
             # Compute the Numerical at the interfaces
             NumericalFlux(
-                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                 F_cell,
                 F_interf,
                 NBPOINTS,
@@ -958,11 +963,11 @@ def main(fconfigfile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
             if HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
-                Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                Te = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 print(Te)
             
 
@@ -992,7 +997,7 @@ def main(fconfigfile):
         while time < TIMEFINAL:
             # Save results
             if (iter % SAVERATE) == 0:
-                SaveResults(Resultsdir, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+                SaveResults(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, V, Barr, x_center, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -1018,18 +1023,18 @@ def main(fconfigfile):
             ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J)
-            SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+            SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J)
+            SetOutlet(P[:, -1], U_RightGhost, P_RightGhost,Mi, A0, Te_Cath, J)
             # Compute the Fluxes in the center of the cell
-            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+            InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
             # Compute the convective Delta t (Only in the first step)
-            Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+            Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
             if iter == 0:
                 Delta_t = Delta_t/3
             # Compute the Numerical at the interfaces
             NumericalFlux(
-                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                 F_cell,
                 F_interf,
                 NBPOINTS,
@@ -1041,12 +1046,12 @@ def main(fconfigfile):
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
             # First half step of strang-splitting
             if HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
-                P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
             
@@ -1086,16 +1091,16 @@ def main(fconfigfile):
             #           SECOND STEP RK3
             #################################################
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 2)
-            SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+            SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 2)
+            SetOutlet(P[:, -1], U_RightGhost, P_RightGhost,Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
-            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+            InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
             # Compute the Numerical at the interfaces
             NumericalFlux(
-                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                 F_cell,
                 F_interf,
                 NBPOINTS,
@@ -1106,7 +1111,7 @@ def main(fconfigfile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                
 
             # Update the solution
@@ -1144,16 +1149,16 @@ def main(fconfigfile):
             #           THIRD STEP RK3
             #################################################
             # Set the boundaries
-            SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
-            SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
+            SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
+            SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
-            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+            InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
             # Compute the Numerical at the interfaces
             NumericalFlux(
-                np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                 F_cell,
                 F_interf,
                 NBPOINTS,
@@ -1163,7 +1168,7 @@ def main(fconfigfile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
             # Update the solution
             U[:, :] = (
@@ -1180,9 +1185,9 @@ def main(fconfigfile):
             )
             # Second half step of strang-splitting
             if HEATFLUX and IMPlICIT:
-                SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
-                SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
-                P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
+                SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
+                SetOutlet(P[:, -1], U_RightGhost, P_RightGhost,Mi, A0, Te_Cath, J)
+                P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
             # Prevent the energy to be strictly negative
@@ -1231,7 +1236,7 @@ def main(fconfigfile):
                         file.write("\n")  # Add a newline at the end (optional)
             iter += 1
     # Saves the last frame
-    SaveResults(Resultsdir, P, U, P_Inlet, P_Outlet, J, V, Barr, x_center, time, i_save)
+    SaveResults(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, V, Barr, x_center, time, i_save)
     i_save += 1
     print(
         "Iter = ",
@@ -1328,10 +1333,10 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
             S = np.ones((4, NBPOINTS))  # Source Term
             F_cell = np.ones((4, NBPOINTS + 2))  # Flux at the cell center. We include the Flux of the Ghost cells
             F_interf = np.ones((4, NBPOINTS + 1))  # Flux at the interface
-            U_Inlet = np.ones((4, 1))  # Ghost cell on the left
-            P_Inlet = np.ones((5, 1))  # Ghost cell on the left
-            U_Outlet = np.ones((4, 1))  # Ghost cell on the right
-            P_Outlet = np.ones((5, 1))  # Ghost cell on the right
+            U_LeftGhost = np.ones((4, 1))  # Ghost cell on the left
+            P_LeftGhost = np.ones((5, 1))  # Ghost cell on the left
+            U_RightGhost = np.ones((4, 1))  # Ghost cell on the right
+            P_RightGhost = np.ones((5, 1))  # Ghost cell on the right
 
             if TIMESCHEME == "TVDRK3":
                 P_1 = np.ones(
@@ -1395,19 +1400,19 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                 while time < TIMEFINAL:
 
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 1)
-                    SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
+                    SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 1)
+                    SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, Mi, A0, Te_Cath, J)
 
                     # Compute the Fluxes in the center of the cell
-                    InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+                    InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
                     # Compute the convective Delta t
-                    Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+                    Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
                     #print(Delta_t)
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
-                        np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                        np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                        np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                        np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                         F_cell,
                         F_interf,
                         NBPOINTS,
@@ -1418,11 +1423,11 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
                     if HEATFLUX and IMPlICIT:
                         dt_HF = Delta_t
-                        Te = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                        Te = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                         print(Te)
                     
 
@@ -1462,18 +1467,18 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J)
-                    SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+                    SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J)
+                    SetOutlet(P[:, -1], U_RightGhost, P_RightGhost,Mi, A0, Te_Cath, J)
                     # Compute the Fluxes in the center of the cell
-                    InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+                    InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
                     # Compute the convective Delta t (Only in the first step)
-                    Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+                    Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
                     if iter == 0:
                         Delta_t = Delta_t/3
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
-                        np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                        np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                        np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                        np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                         F_cell,
                         F_interf,
                         NBPOINTS,
@@ -1485,12 +1490,12 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                         Delta_t = min(dt_HF, Delta_t)
                     # First half step of strang-splitting
                     if HEATFLUX and IMPlICIT:
                         dt_HF = Delta_t
-                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                         U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
                     
@@ -1530,16 +1535,16 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     #           SECOND STEP RK3
                     #################################################
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 2)
-                    SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
+                    SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 2)
+                    SetOutlet(P[:, -1], U_RightGhost, P_RightGhost,Mi, A0, Te_Cath, J)
 
                     # Compute the Fluxes in the center of the cell
-                    InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+                    InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
-                        np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                        np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                        np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                        np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                         F_cell,
                         F_interf,
                         NBPOINTS,
@@ -1550,7 +1555,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                     
 
                     # Update the solution
@@ -1588,16 +1593,16 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     #           THIRD STEP RK3
                     #################################################
                     # Set the boundaries
-                    SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
-                    SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
+                    SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
+                    SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, Mi, A0, Te_Cath, J)
 
                     # Compute the Fluxes in the center of the cell
-                    InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+                    InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
-                        np.concatenate([P_Inlet, P, P_Outlet], axis=1),
-                        np.concatenate([U_Inlet, U, U_Outlet], axis=1),
+                        np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+                        np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
                         F_cell,
                         F_interf,
                         NBPOINTS,
@@ -1607,7 +1612,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
 
                     # Update the solution
                     U[:, :] = (
@@ -1624,9 +1629,9 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
                     # Second half step of strang-splitting
                     if HEATFLUX and IMPlICIT:
-                        SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
-                        SetOutlet(P[:, -1], U_Outlet, P_Outlet,Mi, A0, Te_Cath, J)
-                        P[3, :] = heatFluxImplicit(np.concatenate([P_Inlet, P, P_Outlet], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
+                        SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 3)
+                        SetOutlet(P[:, -1], U_RightGhost, P_RightGhost,Mi, A0, Te_Cath, J)
+                        P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, 0.5*Delta_t)
                         U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
                     # Prevent the energy to be strictly negative

@@ -29,3 +29,5 @@ __pycache__
 configuration_local.ini
 
 Inputs
+
+.vscode

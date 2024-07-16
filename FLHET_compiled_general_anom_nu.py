@@ -875,8 +875,8 @@ def main(fconfigfile):
 
     if msp.boolInputAnomNu:
         df_nu_anom  = msp.extract_anom_nu()
-        nu_anom    = interpolate.interp1d(df_nu_anom['x']/100, df_nu_anom['nu_anom'])(x_center)
-        w_ce    = (phy_const.e / (phy_const.m_e)) * Barr
+        nu_anom    = interpolate.interp1d(df_nu_anom['x[cm]']/100, df_nu_anom['nu_anom[Hz]'])(x_center)
+        w_ce    = (phy_const.e / phy_const.m_e) * Barr
         alpha_B = nu_anom / w_ce
 
         """

@@ -167,6 +167,75 @@ def compute_phi(fE, fDelta_x, fJ, fV, fRext):
     return phi
 
 
+@njit
+def compute_heat_flux(fP_ext, fBarr, fESTAR, fR1, fR2, fMi, fx_center, fLTHR, fKEL, falpha_B):
+    #############################################################
+    #       We give a name to the vars to make it more readable
+    #############################################################
+    ng = fP_ext[0, :] # It contains ghost cells
+    ni = fP_ext[1, :] # It contains ghost cells
+    Te = fP_ext[3, :] # It contains ghost cells
+
+    # fBarr_extended    = np.concatenate([[fBarr[0]], fBarr, [fBarr[-1]]])
+    # falpha_B_extended = np.concatenate([[falpha_B[0]], falpha_B, [falpha_B[-1]]])
+
+    me = phy_const.m_e
+    wce = phy_const.e * fBarr / me # electron cyclotron frequency
+
+
+
+    #############################
+    #       Compute the rates   #
+    #############################
+    Eion = 12.1  # Ionization energy
+    gamma_i = 3  # Excitation coefficient
+
+    sigma = 2.0 * Te / fESTAR  # SEE yield
+    sigma[sigma > 0.986] = 0.986
+    if wall_inter_type == "Default":
+        # nu_iw value before Martin changed the code for Charoy's test cases.    
+        nu_iw = (4./3.)*(1./(fR2 - fR1))*np.sqrt(phy_const.e*Te/fMi)
+        # Limit the wall interactions to the inner channel
+        nu_iw[fx_center > fLTHR] = 0.0
+        nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
+    
+    elif wall_inter_type == "None":
+        nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
+        nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
+
+
+
+    # TODO: Put decreasing wall collisions (Not needed for the moment)
+    #    if decreasing_nu_iw:
+    #        index_L1 = np.argmax(z > L1)
+    #        index_LTHR = np.argmax(z > LTHR)
+    #        index_ind = index_L1 - index_LTHR + 1
+    #
+    #        nu_iw[index_LTHR: index_L1] = nu_iw[index_LTHR] * np.arange(index_ind, 1, -1) / index_ind
+    #        nu_iw[index_L1:] = 0.0
+
+    ##################################################
+    #       Compute the electron properties          #
+    ##################################################
+    phi_W = Te * np.log(np.sqrt(fMi/ (2 * np.pi * me)) * (1 - sigma))  # Wall potential
+    Ew = 2 * Te + (1 - sigma) * phi_W  # Energy lost at the wall
+
+    nu_m = (
+        ng * fKEL + falpha_B * wce + nu_ew
+    )  # 
+
+    kappa = 5./2. * ni * phy_const.e**2 * Te / (phy_const.m_e * nu_m)
+    kappa_perp = kappa/(1 + (wce / nu_m) ** 2)
+
+    # kappa_12 = 0.5*(kappa[1:] + kappa[:-1])
+    kappa_12 = 0.5*(kappa_perp [1:] + kappa_perp[:-1])
+    grad_Te  = (Te[1:] - Te[:-1]) / ( fx_center[1:] - fx_center[:-1] )
+
+    q_12     =  - kappa_12*grad_Te
+
+    return 0.5*(q_12[1:] + q_12[:-1])
+
+
 ##########################################################
 #           MAIN BLOCK
 ##########################################################
@@ -227,6 +296,9 @@ if __name__ == '__main__':
     with open(ResultsData + "/MacroscopicUnvariants.pkl", 'rb') as f:
         [B, x_mesh, x_center, alpha_B] = pickle.load(f)
     Delta_x = x_mesh[1:] - x_mesh[:-1]
+    x_center_extended = np.insert(x_center, 0, -x_center[0])
+    x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
+    nu_anom_eff     = alpha_B * (phy_const.e/phy_const.m_e) * B
 
     ##########################################################
     #           Plot parameters
@@ -263,7 +335,7 @@ if __name__ == '__main__':
     for i_save, file in enumerate(files):
         
         with open(file, 'rb') as f:
-            [t, P, U, P_Inlet, P_Outlet, J, Efield] = pickle.load(f)
+            [t, P, U, P_LeftGhost, P_RightGhost, J, Efield] = pickle.load(f)
         
         # Save the current
         Current[i_save] = J
@@ -285,13 +357,39 @@ if __name__ == '__main__':
     ax.grid(True)
     plt.tight_layout()
     plt.savefig(ResultsFigs+"/Current.pdf", bbox_inches='tight')
-        
+
+    ######################################
+    #    Plot the effective anomalous freq.
+    ######################################
+    f, ax = plt.subplots(figsize=(10,5))
+
+    nu_plus = nu_anom_eff[np.argwhere(nu_anom_eff > 0.)]
+    x_plus   = x_center[np.argwhere(nu_anom_eff > 0.)]
+    nu_minus = nu_anom_eff[np.argwhere(nu_anom_eff < 0.)]
+    x_minus   = x_center[np.argwhere(nu_anom_eff < 0.)]
+    ax_b = ax.twinx()
+    ax.semilogy(x_plus*100, nu_plus, 'g+', label = "$\\nu_{anom}, pos. part$")
+    ax.semilogy(x_minus*100, -nu_minus, 'g.', label = "$\\nu_{anom}, neg. part$")        
+    ax.set_ylabel('$\\nu_{anom}$ [Hz]', fontsize=axisfontsize)
+    ax.set_xlabel('$x$ [cm]', fontsize=axisfontsize)
+    ax.yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+    ax.xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+    ax.legend(fontsize=tickfontsize)
+    ax_b.plot(x_center*100, B, 'r:')
+    ax_b.set_ylabel('$B$ [mT]', color='r', fontsize=axisfontsize)
+    plt.savefig(ResultsFigs+"/effective_anom_nu.png", bbox_inches='tight')
+    plt.close()
+
+    ########################################
+    #        One chart per frmae routine
+    ########################################
+
     for i_save, file in enumerate(files):
 
         print("Preparing plot for i = ", i_save)
 
         with open(file, 'rb') as f:
-            [t, P, U, P_Inlet, P_Outlet, J, Efield] = pickle.load(f)
+            [t, P, U, P_LeftGhost, P_RightGhost, J, Efield] = pickle.load(f)
 
         phi = compute_phi(Efield, Delta_x, J, V, Rext)
         
@@ -300,6 +398,8 @@ if __name__ == '__main__':
 
         Rei_sat = compute_Rei_saturated(P, Mi, x_center)
         #print(Rei_sat.shape)
+
+        q_array = compute_heat_flux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),  np.concatenate([[B[0]], B, [B[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
         
         f = plt.figure(figsize = (12,12.5))
 
@@ -312,8 +412,9 @@ if __name__ == '__main__':
         ax7 = plt.subplot2grid((5,2),(1,1))
         ax8 = plt.subplot2grid((5,2),(2,1))
         ax9 = plt.subplot2grid((5,2),(3,1))
+        ax10= plt.subplot2grid((5,2),(4,1))
 
-        ax = [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8, ax9]
+        ax = [ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8, ax9, ax10]
 
         ax_b=ax[0].twinx()
         ax[0].plot(x_center*100, P[0,:]/1e19)
@@ -402,10 +503,19 @@ if __name__ == '__main__':
         ax_b = ax[8].twinx()
         ax[8].plot(x_center*100, j_of_x)
         ax[8].set_ylabel('$J_d$ [A.m$^{-2}$]', fontsize=axisfontsize)
-        ax[8].set_xlabel('$x$ [cm]', fontsize=axisfontsize)
+        ax[8].set_xticklabels([])
         ax[8].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax[8].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax[8].set_ylim([0.,max(800., 1.1*j_of_x.max())])
+        ax_b.plot(x_center*100, B, 'r:')
+        ax_b.set_yticklabels([])
+
+        ax_b = ax[9].twinx()
+        ax[9].plot(x_center*100, q_array)        
+        ax[9].set_ylabel('Axial heat flux $q_x$ [W m$^{-2}$]', fontsize=axisfontsize)
+        ax[9].set_xlabel('$x$ [cm]', fontsize=axisfontsize)
+        ax[9].yaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
+        ax[9].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)
         ax_b.plot(x_center*100, B, 'r:')
         ax_b.set_yticklabels([])
 

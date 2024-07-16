@@ -3,6 +3,7 @@ import configparser
 from scipy import constants as phy_const
 import math
 import os
+import pandas as pd
 
 
 class SimuParameters():
@@ -49,6 +50,12 @@ class SimuParameters():
 
         self.HEATFLUX = bool(
             config.getboolean("Physical Parameters", "Electron heat flux", fallback=False)
+        )
+
+        # Anomalous Transport
+        anomParams  = config["Anomalous Transport"]
+        self.boolInputAnomNu     = bool(
+            config.getboolean("Anomalous Transport", "Input anomalous nu", fallback=False)
         )
 
         # Magnetic field configuration
@@ -131,23 +138,36 @@ class SimuParameters():
             config.write(configfile)
 
 
-    def extract_anomalous(self):
+    def extract_anom_coeffs(self):
 
         # Extracting the anomalous transport coefficients
 
         config = configparser.ConfigParser()
         config.read(self.configinipath)
 
-        physicalParameters = config["Physical Parameters"]
+        anomParams = config["Anomalous transport"]
         alpha_B1 = float(
-            physicalParameters["Anomalous transport alpha_B1"]
+            anomParams["Anomalous transport alpha_B1"]
         )  # Anomalous transport
         alpha_B2 = float(
-            physicalParameters["Anomalous transport alpha_B2"]
+            anomParams["Anomalous transport alpha_B2"]
         )  # Anomalous transport
 
 
         return alpha_B1, alpha_B2
+    
+
+    def extract_anom_nu(self):
+
+        # Extracting the anomalous transport coefficients
+
+        config = configparser.ConfigParser()
+        config.read(self.configinipath)
+
+        anomParams  = config["Anomalous Transport"]
+        inputfil    = anomParams["Anomalous nu file"]
+
+        return pd.read_csv(inputfil, sep='\t', header=0)
     
 
     def return_tiled_domain(self):

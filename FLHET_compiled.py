@@ -854,11 +854,11 @@ def main(fconfigfile):
     msp.save_config_file("Configuration.cfg")
 
     # delete current data in location:
-    list_of_res_files = glob.glob(msp.Results+"/Data/MacroscopicVars_*.pkl")
+    list_of_res_files = glob.glob(msp.Results+"/Data/Macroscopic*.pkl")
     for filenametemp in list_of_res_files:
         os.remove(filenametemp)
     if len(list_of_res_files) > 0:
-        print("Warning: all MacroscopicVars_<i>.pkl files in the "+Resultsdir+" location were deleted to welcome new data.")
+        print("Warning: all Macroscopic*.pkl files in the "+Resultsdir+" location were deleted to welcome new data.")
 
 
     ##########################################################
@@ -883,6 +883,7 @@ def main(fconfigfile):
     P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
     U = np.ones((4, NBPOINTS))  # Conservative vars U = [rhog, rhoi, rhoUi, 3/2 ne*e*Te]
     S = np.ones((4, NBPOINTS))  # Source Term
+    Efield  = np.zeros(NBPOINTS)
     F_cell = np.ones((4, NBPOINTS + 2))  # Flux at the cell center. We include the Flux of the Ghost cells
     F_interf = np.ones((4, NBPOINTS + 1))  # Flux at the interface
     U_LeftGhost = np.ones((4, 1))  # Ghost cell on the left
@@ -974,9 +975,6 @@ def main(fconfigfile):
 
         dJdt = 0.0
 
-    # Initialize the electric field.
-    Efield = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
-
     i_save = 0
     time = 0.0
     iter = 0
@@ -1003,8 +1001,11 @@ def main(fconfigfile):
     if TIMESCHEME == "Forward Euler":
         J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
         while time < TIMEFINAL:
+
             # Save results
             if (iter % SAVERATE) == 0:
+                # Compute the electric field.
+                Efield = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)                
                 SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
                 i_save += 1
                 print(
@@ -1074,8 +1075,11 @@ def main(fconfigfile):
     if TIMESCHEME == "TVDRK3":
 
         while time < TIMEFINAL:
+            
             # Save results
             if (iter % SAVERATE) == 0:
+                # Compute the electric field.
+                Efield = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
                 SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
                 i_save += 1
                 print(

@@ -226,7 +226,7 @@ if __name__ == '__main__':
     ResultsData = Results+"/Data"    
     with open(ResultsData + "/MacroscopicUnvariants.pkl", 'rb') as f:
         [B, x_mesh, x_center, alpha_B] = pickle.load(f)
-    Delta_x = x_mesh[1,:] - x_mesh[:-1]
+    Delta_x = x_mesh[1:] - x_mesh[:-1]
 
     ##########################################################
     #           Plot parameters

@@ -187,7 +187,6 @@ def gradient(y, x):
     return dp_dz
 
 
-#@njit
 def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center, fLTHR, fKEL, falpha_B):
     
     ng = fP[0, :]
@@ -212,6 +211,67 @@ def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center,
     mu_eff_arr = (phy_const.e/(phy_const.m_e * nu_m * (1 + (wce/nu_m)**2)))
 
     return mu_eff_arr
+
+
+@njit
+def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B):
+
+    # TODO: This is already computed! Maybe move to the source
+    #############################################################
+    #       We give a name to the vars to make it more readable
+    #############################################################
+    ng = fP[0,:]
+    ni = fP[1,:]
+    Te = fP[3,:]
+    ve = fP[4,:]
+
+    me = phy_const.m_e
+    wce     = phy_const.e*fB/me   # electron cyclotron frequency
+    
+    #############################
+    #       Compute the rates   #
+    #############################
+
+    sigma = 2.0 * Te / fESTAR  # SEE yield
+    sigma[sigma > 0.986] = 0.986
+    if wall_inter_type == "Default":
+        # nu_iw value before Martin changed the code for Charoy's test cases.    
+        nu_iw = (4./3.)*(1./(fR2 - fR1))*np.sqrt(phy_const.e*Te/fM)
+        # Limit the wall interactions to the inner channel
+        nu_iw[fx_center > fLTHR] = 0.0
+        nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
+    
+    elif wall_inter_type == "None":
+        nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
+        nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
+
+
+
+    # TODO: Put decreasing wall collisions (Not needed for the moment)
+    #    if decreasing_nu_iw:
+    #        index_L1 = np.argmax(z > L1)
+    #        index_LTHR = np.argmax(z > LTHR)
+    #        index_ind = index_L1 - index_LTHR + 1
+    #
+    #        nu_iw[index_LTHR: index_L1] = nu_iw[index_LTHR] * np.arange(index_ind, 1, -1) / index_ind
+    #        nu_iw[index_L1:] = 0.0
+
+    ##################################################
+    #       Compute the electron properties          #
+    ##################################################
+
+    nu_m = (
+        ng * fKEL + falpha_B * wce + nu_ew
+        )  # Electron momentum - transfer collision frequency
+    
+    mu_eff = (phy_const.e / (me* nu_m)) * (
+        1.0 / (1 + (wce / nu_m) ** 2)
+        )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
+
+    dp_dz  = gradient(ni*Te, fx_center)
+    
+    E = - ve / mu_eff - dp_dz / ni  # Discharge electric field
+    return E
 
 
 @njit
@@ -501,7 +561,6 @@ def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1
     return TDMA(a_lowerDiag[1:], b_mainDiag, c_upperDiag[:-1], d_solutionVector)
 
 
-
 # Compute the Current
 @njit
 def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext):
@@ -693,7 +752,7 @@ def ComputeDelta_t(fP, fNBPOINTS, fMi, fCFL, fDelta_x):
 #                                                                                        #
 ##########################################################################################
 
-def SaveResults(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fV, fBarr, fx_center, ftime, fi_save):
+def MakeTheResultsDir(fResults):
     if not os.path.exists(fResults):
         os.makedirs(fResults)
     ResultsFigs = fResults + "/Figs"
@@ -703,10 +762,26 @@ def SaveResults(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fV, fBarr, fx
     if not os.path.exists(ResultsData):
         os.makedirs(ResultsData)
 
+
+def SaveVariantData(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield,ftime, fi_save):
+
+    ResultsData = fResults + "/Data"
+
     # Save the data
     filenameTemp = ResultsData + "/MacroscopicVars_" + f"{fi_save:06d}" + ".pkl"
     pickle.dump(
-        [ftime, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fV, fBarr, fx_center], open(filenameTemp, "wb")
+        [ftime, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield], open(filenameTemp, "wb")
+    )  # TODO: Save the current and the electric field
+
+
+def SaveUnvariantData(fResults, fBarr, fx_mesh, fx_center, falpha_B):
+
+    ResultsData = fResults + "/Data"
+
+    # Save the data
+    filenameTemp = ResultsData + "/MacroscopicUnvariants.pkl"
+    pickle.dump(
+        [fBarr, fx_mesh, fx_center, falpha_B], open(filenameTemp, "wb")
     )  # TODO: Save the current and the electric field
 
 
@@ -774,10 +849,9 @@ def main(fconfigfile):
     if START_FROM_INPUT:
         INPUT_DIR  = msp.INPUT_DIR
 
-    if not os.path.exists(Resultsdir):
-        os.makedirs(Resultsdir)
-    msp.save_config_file("Configuration.cfg")
+    MakeTheResultsDir(Resultsdir)
 
+    msp.save_config_file("Configuration.cfg")
 
     # delete current data in location:
     list_of_res_files = glob.glob(msp.Results+"/Data/MacroscopicVars_*.pkl")
@@ -801,6 +875,9 @@ def main(fconfigfile):
 
     alpha_B1, alpha_B2  = msp.extract_anomalous()
     alpha_B = compute_alphaB_array(x_center, alpha_B1, alpha_B2, LTHR, msp.NBPOINTS_INIT)
+
+    # Save the Unvariants data as pkl:
+    SaveUnvariantData(Resultsdir, Barr, x_mesh, x_center, alpha_B)
 
     # Allocation of vectors
     P = np.ones((5, NBPOINTS))  # Primitive vars P = [ng, ni, ui,  Te, ve] TODO: maybe add , E
@@ -897,6 +974,8 @@ def main(fconfigfile):
 
         dJdt = 0.0
 
+    # Initialize the electric field.
+    Efield = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
 
     i_save = 0
     time = 0.0
@@ -926,7 +1005,7 @@ def main(fconfigfile):
         while time < TIMEFINAL:
             # Save results
             if (iter % SAVERATE) == 0:
-                SaveResults(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, V, Barr, x_center, time, i_save)
+                SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -997,7 +1076,7 @@ def main(fconfigfile):
         while time < TIMEFINAL:
             # Save results
             if (iter % SAVERATE) == 0:
-                SaveResults(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, V, Barr, x_center, time, i_save)
+                SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -1236,7 +1315,7 @@ def main(fconfigfile):
                         file.write("\n")  # Add a newline at the end (optional)
             iter += 1
     # Saves the last frame
-    SaveResults(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, V, Barr, x_center, time, i_save)
+    SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
     i_save += 1
     print(
         "Iter = ",

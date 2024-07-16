@@ -13,18 +13,11 @@ import sys
 import configparser
 from numba import njit
 
+from modules.simu_params import SimuParameters
+
 ##########################################################
 #           FUNCTIONS
 ##########################################################
-
-
-def GetImposedSiz(x_center):
-    xm = (LSIZ1 + LSIZ2)/2
-    Siz = SIZMAX*np.cos(np.pi*(x_center - xm)/(LSIZ2 - LSIZ1))
-    Siz = np.where((x_center < LSIZ1)|(x_center > LSIZ2), 0., Siz)
-
-    return Siz
-
 
 @njit
 def gradient(y, x):
@@ -96,7 +89,7 @@ def compute_Rei_saturated(fP, fM, fx_center):
 
 
 @njit
-def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B, fJ, fA0):
+def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTHR, fKEL, falpha_B):
 
     # TODO: This is already computed! Maybe move to the source
     #############################################################
@@ -104,10 +97,9 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
     #############################################################
     ng = fP[0,:]
     ni = fP[1,:]
-    ui = fP[2,:]
     Te = fP[3,:]
     ve = fP[4,:]
-    Gamma_i = ni*ui
+
     me = phy_const.m_e
     wce     = phy_const.e*fB/me   # electron cyclotron frequency
     
@@ -151,11 +143,9 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
         1.0 / (1 + (wce / nu_m) ** 2)
         )  # Effective mobility    dp_dz  = np.gradient(ni*Te, Delta_x)
 
-    I0 = fJ/(phy_const.e*fA0)
     dp_dz  = gradient(ni*Te, fx_center)
-
     
-    E = (I0 - Gamma_i) / (mu_eff * ni) - dp_dz / ni  # Discharge electric field
+    E = - ve / mu_eff - dp_dz / ni  # Discharge electric field
     return E
 
 
@@ -188,169 +178,59 @@ if __name__ == '__main__':
     ##########################################################
     Results     = sys.argv[1]
     ResultConfig = Results+'/Configuration.cfg'
+    msp = SimuParameters(ResultConfig)
 
     ##########################################################
     #           CONFIGURE PHYSICAL PARAMETERS
     ##########################################################
 
-    configFile = ResultConfig
-    config = configparser.ConfigParser()
-    config.read(configFile)
-
-    physicalParameters = config["Physical Parameters"]
-
-    VG = float(physicalParameters["Gas velocity"])  # Gas velocity
-    Mi = float(physicalParameters["Ion Mass"]) * phy_const.m_u  # Ion Mass
-    me = phy_const.m_e  # Electron mass
-    R1 = float(physicalParameters["Inner radius"])  # Inner radius of the thruster
-    R2 = float(physicalParameters["Outer radius"])  # Outer radius of the thruster
-    A0 = np.pi * (R2**2 - R1**2)  # Area of the thruster
-    LX = float(physicalParameters["Length of axis"])  # length of Axis of the simulation
-    LTHR = float(
-        physicalParameters["Length of thruster"]
-    )  # length of thruster (position of B_max)
-    alpha_B1 = float(
-        physicalParameters["Anomalous transport alpha_B1"]
-    )  # Anomalous transport
-    alpha_B2 = float(
-        physicalParameters["Anomalous transport alpha_B2"]
-    )  # Anomalous transport
-    MDOT = float(physicalParameters["Mass flow"])  # Mass flow rate of propellant
-    Te_Cath = float(
-        physicalParameters["e- Temperature Cathode"]
-    )  # Electron temperature at the cathode
-    TE0 = float(physicalParameters["Initial e- temperature"]) # Initial electron temperature at the cathode.
-    NI0 = float(physicalParameters["Initial plasma density"]) # Initial plasma density.
-    #NG0 = float(physicalParameters["Initial neutrals density"]) # Initial neutrals density. No need for this parameter it is processed to have be coehrent with MDOT, AO and VG.
-    Rext = float(physicalParameters["Ballast resistor"])  # Resistor of the ballast
-    V = float(physicalParameters["Voltage"])  # Potential difference
-    Circuit = bool(
-        config.getboolean("Physical Parameters", "Circuit", fallback=False)
-    )  # RLC Circuit
-    HEATFLUX = bool(
-        config.getboolean("Physical Parameters", "Electron heat flux", fallback=False)
-    )
-
-
-    # Magnetic field configuration
-    MagneticFieldConfig = config["Magnetic field configuration"]
-
-    if MagneticFieldConfig["Type"] == "Default":
-        print(MagneticFieldConfig["Type"] + " Magnetic Field")
-
-        BMAX = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
-        B0 = float(MagneticFieldConfig["B-field at 0"])  # Mag field at x=0
-        BLX = float(MagneticFieldConfig["B-field at LX"])  # Mag field at x=LX
-        LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
-        LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
-        saveBField = bool(MagneticFieldConfig["Save B-field"])
-
-
-    # Ionization source term configuration
-    IonizationConfig = config["Ionization configuration"]
-    isSourceImposed = bool(
-        config.getboolean("Ionization configuration", "source is imposed", fallback=False)
-    )
-    if isSourceImposed:
-        print("The ionization source term is imposed as specified in T.Charoy's thesis, section 2.2.2.")
-    SIZMAX  = float(IonizationConfig["Maximum S_iz value"])  # Max Mag field
-    LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
-    LSIZ2   = float(IonizationConfig["Position of 2nd S_iz zero"])  # Mag field at x=LX
-    assert(LSIZ2 >= LSIZ1)
-
-    # Collisions parameters
-    CollisionsConfig = config["Collisions"]
-    areThereIonizationColl = bool(
-        config.getboolean("Collisions", "enable ionization coll.", fallback=False)
-    )    
-    KEL = float(CollisionsConfig["Elastic collisions reaction rate"])
-
-    # Wall interactions
-    WallInteractionConfig = config["Wall interactions"]
-    ESTAR = float(WallInteractionConfig["Crossover energy"])  # Crossover energy
-    assert((WallInteractionConfig["Type"] == "Default")|(WallInteractionConfig["Type"] == "None"))
+    MDOT    = msp.MDOT
+    Mi      = msp.Mi
+    A0      = msp.A0
+    VG      = msp.VG
+    NI0     = msp.NI0
+    TE0     = msp.TE0
+    Te_Cath     = msp.Te_Cath    
+    ESTAR   = msp.ESTAR
+    R1      = msp.R1
+    R2      = msp.R2
+    LX  = msp.LX
+    LTHR    = msp.LTHR
+    KEL     = msp.KEL
+    Rext        = msp.Rext
+    V           = msp.V
+    boolCircuit = msp.Circuit    
+    HEATFLUX    = msp.HEATFLUX
+    boolIonColl = msp.boolIonColl
+    boolSizImposed  = msp.boolSizImposed
+    wall_inter_type     = msp.wall_inter_type 
 
     ##########################################################
     #           NUMERICAL PARAMETERS
     ##########################################################
-    NumericsConfig = config["Numerical Parameteres"]
 
-    NBPOINTS = int(NumericsConfig["Number of points"])  # Number of cells
-    SAVERATE = int(NumericsConfig["Save rate"])  # Rate at which we store the data
-    CFL = float(NumericsConfig["CFL"])  # Nondimensional size of the time step
-    TIMEFINAL = float(NumericsConfig["Final time"])  # Last time of simulation
-    Results = NumericsConfig["Result dir"]  # Name of result directory
-    TIMESCHEME = NumericsConfig["Time integration"]  # Time integration scheme
-    IMPlICIT   = bool(
-        config.getboolean("Numerical Parameteres", "Implicit heat flux", fallback=False) ) # Time integration scheme for heat flux equation
-    MESHREFINEMENT =  bool(
-        config.getboolean("Numerical Parameteres", "Mesh refinement", fallback=False) )
-    if MESHREFINEMENT:
-        MESHLEVELS = int(NumericsConfig["Mesh levels"])
-        REFINEMENTLENGTH = float(NumericsConfig["Refinement length"])
+    Resultsdir  = msp.Results
+    TIMESCHEME  = msp.TIMESCHEME
+    TIMEFINAL   = msp.TIMEFINAL
+    SAVERATE    = msp.SAVERATE
+    CFL         = msp.CFL
+    IMPlICIT    = msp.IMPlICIT
 
-
-
-    if not os.path.exists(Results):
-        os.makedirs(Results)
-    with open(Results + "/Configuration.cfg", "w") as configfile:
-        config.write(configfile)
+    START_FROM_INPUT  = msp.START_FROM_INPUT
+    if START_FROM_INPUT:
+        INPUT_DIR  = msp.INPUT_DIR
 
     ##########################################################
-    #           Allocation of large vectors                  #
+    #           Collects Large Unvariant Parameters
     ##########################################################
-
-    Delta_t = 1.0  # Initialization of Delta_t (do not change)
-    # Delta_x = LX / NBPOINTS
-
-    x_mesh = np.linspace(0, LX, NBPOINTS + 1)  # Mesh in the interface
-    if MESHREFINEMENT:
-        # get the point below the refinement length
-        Dx_notRefined = x_mesh[1]
-        #First level
-        i_refinement = int(np.floor(REFINEMENTLENGTH/Dx_notRefined))
-        mesh_level_im1 = np.linspace(0, x_mesh[i_refinement], i_refinement*2 + 1)
-        mesh_refinedim1 = np.concatenate((mesh_level_im1[:-1], x_mesh[i_refinement:]))
-        # plt.plot(x_mesh, np.zeros_like(x_mesh), linestyle='None', marker='o', markersize=2)
-        # plt.plot(mesh_refinedim1, np.ones_like(mesh_refinedim1), linestyle='None', marker='o', markersize=2)
-
-        #Secondand rest of levels level
-        if MESHLEVELS > 1:
-            for i_level in range(2, MESHLEVELS + 1):
-                i_refinement_level   = int((np.shape(mesh_level_im1)[0] - 1)/2)
-                mesh_level_i         = np.linspace(0, mesh_level_im1[i_refinement_level], i_refinement_level*2 + 1)
-                mesh_refined_level_i = np.concatenate((mesh_level_i[:-1], mesh_refinedim1[i_refinement_level:]))
-
-                mesh_level_im1      = mesh_level_i
-                mesh_refinedim1     = mesh_refined_level_i
-                # plt.plot(mesh_refined_level_i, np.ones_like(mesh_refined_level_i)*i_level, linestyle='None', marker='o', markersize=2)
-            x_mesh = np.copy(mesh_refined_level_i)
-
-    # x_center = np.linspace(0.5*Delta_x, LX - 0.5*Delta_x, NBPOINTS)  # Mesh in the center of cell
-    x_center = (x_mesh[1:] + x_mesh[:-1])/2
-    Delta_x  =  x_mesh[1:] - x_mesh[:-1]
-    NBPOINTS = np.shape(x_center)[0]
-    # We create an array that also include the position of the ghost cells
-    x_center_extended = np.insert(x_center, 0, -x_center[0])
-    x_center_extended = np.append(x_center_extended, x_center[-1] + Delta_x[-1])
-    Delta_x_extended  = np.insert(Delta_x, 0, Delta_x[0])
-    Delta_x_extended  = np.append(Delta_x_extended, Delta_x[-1])    
-
-    alpha_B = (np.ones(NBPOINTS) * alpha_B1)  # Anomalous transport coefficient inside the thruster
-    alpha_B = np.where(x_center < LTHR, alpha_B, alpha_B2)  # Anomalous transport coefficient in the plume
-    alpha_B_smooth = np.copy(alpha_B)
-
-    # smooth between alpha_B1 and alpha_B2
-    nsmooth_o2 = NBPOINTS//10
-    for index in range(nsmooth_o2, NBPOINTS - (nsmooth_o2-1)):
-        alpha_B_smooth[index] = np.mean(alpha_B[index-nsmooth_o2:index+nsmooth_o2])
-    alpha_B = alpha_B_smooth
-
+    ResultsData = Results+"/Data"    
+    with open(ResultsData + "/MacroscopicUnvariants.pkl", 'rb') as f:
+        [B, x_mesh, x_center, alpha_B] = pickle.load(f)
+    Delta_x = x_mesh[1,:] - x_mesh[:-1]
 
     ##########################################################
-    #           Make the plots
+    #           Plot parameters
     ##########################################################
-
 
     #plt.style.use('classic')
     #plt.rcParams["font.family"] = 'Times New Roman'
@@ -361,35 +241,33 @@ if __name__ == '__main__':
     tickfontsize = 11
     axisfontsize = 14
 
+    ########################################################
+    #               Make the plots
+    ########################################################
+
     ResultsFigs = Results+"/Figs"
-    ResultsData = Results+"/Data"
     if not os.path.exists(ResultsFigs):
         os.makedirs(ResultsFigs)
 
     # open all the files in the directory and sort them to do the video in order
-    files       = glob.glob(ResultsData + "/*.pkl")
+    files       = glob.glob(ResultsData + "/MacroscopicVars_*.pkl")
     filesSorted = sorted(files, key = lambda x: os.path.getmtime(x), reverse=True)
     files.sort(key=os.path.getmtime)
 
 
     Current = np.zeros(np.shape(files)[0])
     CurrentDensity = np.zeros(np.shape(files)[0])
-    Voltage = np.zeros(np.shape(files)[0])
+    Voltage = np.full(np.shape(files)[0], V)
     time    = np.zeros(np.shape(files)[0])
-
-    #####################################
-    #           Plot variables
-    #####################################
 
     for i_save, file in enumerate(files):
         
         with open(file, 'rb') as f:
-            [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
+            [t, P, U, P_Inlet, P_Outlet, J, Efield] = pickle.load(f)
         
         # Save the current
         Current[i_save] = J
         CurrentDensity[i_save] = np.mean(P[1,:]*phy_const.e*(P[2,:] - P[4,:]))
-        Voltage[i_save] = V
         time[i_save]    = t
 
     #####################################
@@ -413,13 +291,11 @@ if __name__ == '__main__':
         print("Preparing plot for i = ", i_save)
 
         with open(file, 'rb') as f:
-            [t, P, U, P_Inlet, P_Outlet, J, V, B, x_center] = pickle.load(f)
+            [t, P, U, P_Inlet, P_Outlet, J, Efield] = pickle.load(f)
 
-
-        E = compute_E(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B, J, A0)
-        phi = compute_phi(E, Delta_x, J, V, Rext)
+        phi = compute_phi(Efield, Delta_x, J, V, Rext)
         
-        Rei_emp = compute_Rei_empirical(P, B, ESTAR, WallInteractionConfig['Type'], R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
+        Rei_emp = compute_Rei_empirical(P, B, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
         #print(Rei_emp.shape)
 
         Rei_sat = compute_Rei_saturated(P, Mi, x_center)
@@ -451,7 +327,7 @@ if __name__ == '__main__':
         ax_b.plot(x_center*100, B*1000, 'r:')
 
         ax_phi=ax[1].twinx()
-        ax[1].plot(x_center*100, E/1000.)
+        ax[1].plot(x_center*100, Efield/1000.)
         ax[1].set_ylabel('$E$ [kV/m]', fontsize=axisfontsize)
         ax[1].set_xticklabels([])
         ax[1].xaxis.set_tick_params(which='both', size=5, width=1.5, labelsize=tickfontsize)

@@ -145,12 +145,12 @@ class SimuParameters():
         config = configparser.ConfigParser()
         config.read(self.configinipath)
 
-        anomParams = config["Anomalous transport"]
+        anomParams = config["Anomalous Transport"]
         alpha_B1 = float(
-            anomParams["Anomalous transport alpha_B1"]
+            anomParams["Anomalous coefficient alpha_B1"]
         )  # Anomalous transport
         alpha_B2 = float(
-            anomParams["Anomalous transport alpha_B2"]
+            anomParams["Anomalous coefficient alpha_B2"]
         )  # Anomalous transport
 
 

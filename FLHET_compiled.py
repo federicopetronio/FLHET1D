@@ -370,7 +370,7 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
 
 
 @njit
-def heatFlux(fP, fS, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x):
+def heatFlux(fP, fS, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fCFL):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -442,7 +442,7 @@ def heatFlux(fP, fS, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2
     fS[3,:] += (
         -q_source
     )
-    delta_T_min = np.min( ( ni[1:-1] * phy_const.e * fDelta_x**2 ) / kappa_perp[1:-1] )
+    delta_T_min = fCFL * np.min( ( ni[1:-1] * phy_const.e * fDelta_x**2 ) / kappa_perp[1:-1] )
 
     return delta_T_min
 
@@ -873,7 +873,7 @@ def main(fconfigfile):
 
     Barr = compute_B_array(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
 
-    alpha_B1, alpha_B2  = msp.extract_anomalous()
+    alpha_B1, alpha_B2  = msp.extract_anom_coeffs()
     alpha_B = compute_alphaB_array(x_center, alpha_B1, alpha_B2, LTHR, msp.NBPOINTS_INIT)
 
     # Save the Unvariants data as pkl:
@@ -1043,7 +1043,7 @@ def main(fconfigfile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                 Delta_t = min(dt_HF, Delta_t)
             if HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
@@ -1112,8 +1112,7 @@ def main(fconfigfile):
             InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
             # Compute the convective Delta t (Only in the first step)
             Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
-            if iter == 0:
-                Delta_t = Delta_t/3
+
             # Compute the Numerical at the interfaces
             NumericalFlux(
                 np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
@@ -1129,14 +1128,13 @@ def main(fconfigfile):
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                 Delta_t = min(dt_HF, Delta_t)
             # First half step of strang-splitting
             if HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
                 P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
-
             
             if iter == 0:
                 Delta_t = Delta_t/3
@@ -1194,7 +1192,7 @@ def main(fconfigfile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                
 
             # Update the solution
@@ -1251,7 +1249,7 @@ def main(fconfigfile):
             # Compute the source in the center of the cell
             Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
             if HEATFLUX and not IMPlICIT:
-                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 
             # Update the solution
             U[:, :] = (
@@ -1506,7 +1504,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                         Delta_t = min(dt_HF, Delta_t)
                     if HEATFLUX and IMPlICIT:
                         dt_HF = Delta_t
@@ -1573,7 +1571,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
 
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                         Delta_t = min(dt_HF, Delta_t)
                     # First half step of strang-splitting
                     if HEATFLUX and IMPlICIT:
@@ -1638,7 +1636,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                     
 
                     # Update the solution
@@ -1695,7 +1693,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the source in the center of the cell
                     Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
                     if HEATFLUX and not IMPlICIT:
-                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+                        dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 
                     # Update the solution
                     U[:, :] = (

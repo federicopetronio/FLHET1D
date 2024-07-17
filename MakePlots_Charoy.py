@@ -168,7 +168,7 @@ def compute_phi(fE, fDelta_x, fJ, fV, fRext):
 
 
 @njit
-def compute_heat_flux(fP_ext, fBarr, fESTAR, fR1, fR2, fMi, fx_center, fLTHR, fKEL, falpha_B):
+def compute_heat_flux(fP_ext, fBarr, fESTAR, wall_inter_type, fR1, fR2, fMi, fx_center, fLTHR, fKEL, falpha_B):
     #############################################################
     #       We give a name to the vars to make it more readable
     #############################################################
@@ -272,7 +272,7 @@ if __name__ == '__main__':
     HEATFLUX    = msp.HEATFLUX
     boolIonColl = msp.boolIonColl
     boolSizImposed  = msp.boolSizImposed
-    wall_inter_type     = msp.wall_inter_type 
+    wall_inter_type     = msp.wall_inter_type
 
     ##########################################################
     #           NUMERICAL PARAMETERS
@@ -399,7 +399,7 @@ if __name__ == '__main__':
         Rei_sat = compute_Rei_saturated(P, Mi, x_center)
         #print(Rei_sat.shape)
 
-        q_array = compute_heat_flux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),  np.concatenate([[B[0]], B, [B[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
+        q_array = compute_heat_flux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),  np.concatenate([[B[0]], B, [B[-1]]]), ESTAR, wall_inter_type, R1, R2, Mi, x_center_extended, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]))
         
         f = plt.figure(figsize = (12,12.5))
 

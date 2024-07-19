@@ -54,6 +54,9 @@ class SimuParameters():
 
         # Anomalous Transport
         anomParams  = config["Anomalous Transport"]
+        self.boolAnomNuAsEq     = bool(
+            config.getboolean("Anomalous Transport", "Anomalous nu as equation", fallback=False)
+        )
         self.boolInputAnomNu     = bool(
             config.getboolean("Anomalous Transport", "Input anomalous nu", fallback=False)
         )

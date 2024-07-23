@@ -434,7 +434,7 @@ def heatFlux(fP, fS, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2
     kappa_12 = 0.5*(kappa_perp [1:] + kappa_perp[:-1])
     grad_Te  = (Te[1:] - Te[:-1]) / ( fx_center[1:] - fx_center[:-1] )
 
-    q_12     =  - kappa_12*grad_Te
+    q_12     =  - 0.5*kappa_12*grad_Te  # 1/2 test just to match P.A. data
     q_source = (q_12[1:] - q_12[:-1])/fDelta_x
 
     #fS[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * fMi # Gas Density

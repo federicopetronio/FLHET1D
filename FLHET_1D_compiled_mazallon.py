@@ -47,8 +47,8 @@ config.read(configFile)
 
 physicalParameters = config["Physical Parameters"]
 
+Gas_type = physicalParameters["Gas"]
 VG = float(physicalParameters["Gas velocity"])  # Gas velocity
-M = float(physicalParameters["Ion Mass"]) * phy_const.m_u  # Ion Mass
 m = phy_const.m_e  # Electron mass
 R1 = float(physicalParameters["Inner radius"])  # Inner radius of the thruster
 R2 = float(physicalParameters["Outer radius"])  # Outer radius of the thruster
@@ -73,6 +73,12 @@ Circuit = bool(
     config.getboolean("Physical Parameters", "Circuit", fallback=False)
 )  # RLC Circuit
 Estar = float(physicalParameters["Crossover energy"])  # Crossover energy
+
+# Ion mass
+if Gas_type == 'Xenon' :
+    M = 131.293 * phy_const.m_u
+elif Gas_type == 'Krypton' :
+    M = 83.798 * phy_const.m_u
 
 # Magnetic field configuration
 MagneticFieldConfig = config["Magnetic field configuration"]
@@ -168,7 +174,7 @@ if Circuit:
     J0 = 0.0
 
 ##########################################################
-#      Definition of the anomalous transport model       #
+#     Definition of the anomalous transport parameter    #
 ##########################################################
 if AlphaModel == 'Step' :
     alpha_B  = np.ones(NBPOINTS)*alpha_B1                            # Anomalous transport coefficient inside the thruster
@@ -183,7 +189,7 @@ elif AlphaModel == 'Cafleur' :
     pass
 elif AlphaModel == 'Chodura' :
     pass
-elif AlphaModel == 'Cata-driven' :
+elif AlphaModel == 'Data-driven' :
      pass
 ##########################################################
 #           Formulas defining our model                  #
@@ -235,14 +241,20 @@ def Source(P, S):
     #############################
     #       Compute the rates   #
     #############################
-    Eion = 12.1  # Ionization energy
-    gamma_i = 3  # Excitation coefficient
-    # Estar   = 50    # Crossover energy
-
-    Kiz = (
-        1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
-    )  # Ion - neutral  collision rate          TODO: Replace by better
-    Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
+    if Gas_type == 'Xenon' :
+        Eion = 12.1  # Ionization energy
+        gamma_i = 3  # Excitation coefficient
+        Kiz = (
+            1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
+        )  # Ion - neutral  collision rate          TODO: Replace by better
+        Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
+    elif Gas_type == 'Krypton' :
+        Eion = 14
+        gamma_i = 3  # Excitation coefficient
+        Kiz = (
+            1.6e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
+        )  # Ion - neutral  collision rate          TODO: Replace by better
+        Kel = 1.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
     sigma = 2.0 * Te / Estar  # SEE yield
     sigma[sigma > 0.986] = 0.986
     nu_iw = (
@@ -251,6 +263,7 @@ def Source(P, S):
     # Limit the collisions to inside the thruster
     index_L0 = np.argmax(x_center > L0)
     nu_iw[index_L0:] = 0.0
+
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
 
@@ -338,15 +351,20 @@ def compute_I(P, V):
     #############################
     #       Compute the rates   #
     #############################
-    Eion = 12.1  # Ionization energy
-    gamma_i = 3  # Excitation coefficient
-    # Estar   = 50    # Crossover energy
-
-    Kiz = (
-        1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
-    )  # Ion - neutral  collision rate          TODO: Replace by better
-    Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
-
+    if Gas_type == 'Xenon' :
+        Eion = 12.1  # Ionization energy
+        gamma_i = 3  # Excitation coefficient
+        Kiz = (
+            1.8e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
+        )  # Ion - neutral  collision rate          TODO: Replace by better
+        Kel = 2.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
+    elif Gas_type == 'Krypton' :
+        Eion = 14
+        gamma_i = 3  # Excitation coefficient
+        Kiz = (
+            1.6e-13 * (((1.5 * Te) / Eion) ** 0.25) * np.exp(-4 * Eion / (3 * Te))
+        )  # Ion - neutral  collision rate          TODO: Replace by better
+        Kel = 1.5e-13  # Electron - neutral  collision rate     TODO: Replace by good one
     sigma = 2.0 * Te / Estar  # SEE yield
     sigma[sigma > 0.986] = 0.986
 
@@ -356,6 +374,7 @@ def compute_I(P, V):
     # Limit the collisions to inside the thruster
     index_L0 = np.argmax(x_center > L0)
     nu_iw[index_L0:] = 0.0
+
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
 

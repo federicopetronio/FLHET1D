@@ -31,3 +31,5 @@ configuration_local_mazallon_PPS1350.ini
 Inputs
 
 .vscode
+
+auto_copy_script.py

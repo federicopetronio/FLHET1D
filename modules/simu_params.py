@@ -82,7 +82,10 @@ class SimuParameters():
         self.LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
         self.LSIZ2   = float(IonizationConfig["Position of 2nd S_iz zero"])  # Mag field at x=LX
         assert(self.LSIZ2 >= self.LSIZ1)
-
+        self.Eion   = float(IonizationConfig["ionization energy"])
+        self.gamma_i= float(IonizationConfig["coefficient gamma_i"])
+        self.Einj= float(IonizationConfig["injected e- temperature"])
+        
         # Collisions parameters
         CollisionsConfig = config["Collisions"]
         self.boolIonColl = bool(

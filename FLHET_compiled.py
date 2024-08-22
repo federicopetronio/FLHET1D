@@ -275,7 +275,7 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
 
 
 @njit
-def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
+def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, fgamma_i, fEinj):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -293,13 +293,11 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
     #############################
     #       Compute the rates   #
     #############################
-    Eion = 12.1  # Ionization energy
-    gamma_i = 3  # Excitation coefficient
 
     Siz_arr = np.zeros(ng.shape, dtype=float) # the final unit of Siz_arr is m^(-3).s^(-1)
     # Computing ionization source term:
     if not fisSourceImposed:
-        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
+        Kiz = 1.8e-13* (((1.5*Te)/fEion)**0.25) * np.exp(- 4*fEion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
         Siz_arr = ng*ni*Kiz
     else:
         Siz_arr = fimposed_Siz
@@ -360,7 +358,7 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
         - nu_iw * ni * vi
         ) * fMi # Momentum
     fS[3,:] = (
-        - d_IC * Siz_arr * Eion * gamma_i * phy_const.e
+        - d_IC * Siz_arr * fEion * fgamma_i * phy_const.e  +  (1.0 - d_IC)*Siz_arr*fEinj
         - nu_ew * ni * Ew * phy_const.e
         + (1./mu_eff) * ni * ve**2 * phy_const.e
         + div_p*ve
@@ -838,6 +836,9 @@ def main(fconfigfile):
     SAVERATE    = msp.SAVERATE
     boolIonColl = msp.boolIonColl
     boolSizImposed  = msp.boolSizImposed
+    Eion        = msp.Eion
+    gamma_i     = msp.gamma_i
+    Einj        = msp.Einj
     Rext        = msp.Rext
     Te_Cath     = msp.Te_Cath
     CFL         = msp.CFL
@@ -1041,7 +1042,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                 Delta_t = min(dt_HF, Delta_t)
@@ -1125,7 +1126,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
 
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
@@ -1190,7 +1191,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                
@@ -1247,7 +1248,7 @@ def main(fconfigfile):
                 VG
             )
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 
@@ -1362,6 +1363,9 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     SAVERATE    = msp.SAVERATE
     boolIonColl = msp.boolIonColl
     boolSizImposed  = msp.boolSizImposed
+    Eion        = msp.Eion
+    gamma_i     = msp.gamma_i
+    Einj        = msp.Einj
     Rext        = msp.Rext
     Te_Cath     = msp.Te_Cath
     CFL         = msp.CFL
@@ -1502,7 +1506,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                         Delta_t = min(dt_HF, Delta_t)
@@ -1568,7 +1572,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
 
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
@@ -1634,7 +1638,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                     
@@ -1691,7 +1695,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         VG
                     )
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 

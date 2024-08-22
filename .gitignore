@@ -33,3 +33,5 @@ Inputs
 .vscode
 
 auto_copy_script.py
+
+HET_env_exportation.yml

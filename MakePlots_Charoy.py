@@ -529,7 +529,7 @@ if __name__ == '__main__':
 
         #plt.subplots_adjust(wspace = 0.4, hspace=0.2)
         
-        plt.savefig(ResultsFigs+"/MacroscopicVars_New_"+str(i_save)+".png", bbox_inches='tight')
+        plt.savefig(ResultsFigs+f"/MacroscopicVars_New_{i_save:06d}.png", bbox_inches='tight')
         plt.close()
         
 

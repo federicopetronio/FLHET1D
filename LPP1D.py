@@ -307,7 +307,7 @@ def SetInlet(P_In, U_ghost, P_ghost, moment=1):
     # print("SetInlet", mdot*1e6 - M*P_In[1]*P_In[2]/(VG)*(A0*VG)*1e6)
     # print(M,P_In[1],P_In[2],(VG))
     if P_In[1]*P_In[2] < 0.:
-        U_ghost[0] = (mdot - M*P_In[1]*P_In[2]/VG)/(A0*VG)
+        U_ghost[0] = (mdot - M*P_In[1]*P_In[2]*A0)/(A0*VG)
         # print("moment RK3 = ", moment, U_ghost[0]*(A0*VG)*1e6)
     else:
         U_ghost[0] = mdot/(A0*VG)

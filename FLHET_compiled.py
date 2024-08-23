@@ -365,7 +365,7 @@ def SetInlet(P_In, U_ghost, P_ghost, J=0.0, moment=1):
     U_Bohm = np.sqrt(phy_const.e * P_In[3] / M)
 
     if P_In[1] * P_In[2] < 0.0:
-        U_ghost[0] = (mdot - M * P_In[1] * P_In[2] / VG) / (A0 * VG)
+        U_ghost[0] = (mdot - M * P_In[1] * P_In[2] * A0) / (A0 * VG)
     else:
         U_ghost[0] = mdot / (A0 * VG)
     U_ghost[1] = P_In[1] * M

@@ -82,10 +82,16 @@ class SimuParameters():
         self.LSIZ1   = float(IonizationConfig["Position of 1st S_iz zero"])  # Mag field at x=0
         self.LSIZ2   = float(IonizationConfig["Position of 2nd S_iz zero"])  # Mag field at x=LX
         assert(self.LSIZ2 >= self.LSIZ1)
-        self.Eion   = float(IonizationConfig["ionization energy"])
-        self.gamma_i= float(IonizationConfig["coefficient gamma_i"])
-        self.Einj= float(IonizationConfig["injected e- temperature"])
-        
+        try:
+            self.Eion   = float(IonizationConfig["ionization energy"])
+            self.gamma_i= float(IonizationConfig["coefficient gamma_i"])
+            self.Einj= float(IonizationConfig["injected e- temperature"])
+        except KeyError:
+            print("\tUserWarning: the config file " + fconfigfile + " does not specify all three of the parameters 'ionization energy', 'coefficient gamma_i' and 'injection e- temperature'. It may be a config file suited for an older version of the code. Default values for these values are used.")
+            self.Eion   = 12.1
+            self.gamma_i= 3.0
+            self.Einj   = 10.
+
         # Collisions parameters
         CollisionsConfig = config["Collisions"]
         self.boolIonColl = bool(

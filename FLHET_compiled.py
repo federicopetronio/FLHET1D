@@ -47,7 +47,7 @@ from modules.simu_params import SimuParameters
 #           CONFIGURE PHYSICAL PARAMETERS
 ##########################################################
 
-def compute_B_array(fx_center, fBMAX, fB0, fBLX, fLX, fLTHR, fLB1, fLB2):
+def compute_B_array_Charoy(fx_center, fBMAX, fB0, fBLX, fLX, fLTHR, fLB1, fLB2):
 
     a1 = (fBMAX - fB0)/(1 - math.exp(-fLTHR**2/(2*fLB1**2)))
     a2 = (fBMAX - fBLX)/(1 - math.exp(-(fLX - fLTHR)**2/(2*fLB2**2)))
@@ -60,6 +60,11 @@ def compute_B_array(fx_center, fBMAX, fB0, fBLX, fLX, fLTHR, fLB1, fLB2):
 
     return Barr
 
+
+def compute_B_array_default(fx_center, fBMAX, fLTHR, fLB1, fLB2):
+    Barr    = fBMAX * np.exp(-(((fx_center - fLTHR) / fLB1) ** 2.0))  # Magnetic field within the thruster
+    Barr    = np.where(fx_center < fLTHR, Barr, fBMAX * np.exp(-(((fx_center - fLTHR) / fLB2) ** 2.0)))  # Magnetic field outside the thruster
+    return Barr
 
 def compute_alphaB_array(fxcenter, falphaB1, falphaB2, fLTHR, fNBPOINTS_INIT):
 
@@ -872,7 +877,7 @@ def main(fconfigfile):
     x_mesh, x_center, Delta_x, x_center_extended, Delta_x_extended = msp.return_tiled_domain()
     NBPOINTS = np.shape(x_center)[0]
 
-    Barr = compute_B_array(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
+    Barr = compute_B_array_Charoy(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
 
     alpha_B1, alpha_B2  = msp.extract_anom_coeffs()
     alpha_B = compute_alphaB_array(x_center, alpha_B1, alpha_B2, LTHR, msp.NBPOINTS_INIT)
@@ -1389,7 +1394,10 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     x_mesh, x_center, Delta_x, x_center_extended, Delta_x_extended = msp.return_tiled_domain()
     NBPOINTS = np.shape(x_center)[0]
 
-    Barr = compute_B_array(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
+    if msp.BTYPE == 'CharoyBenchmark':
+        Barr = compute_B_array_Charoy(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
+    else:
+        Barr = compute_B_array_default(x_center, msp.BMAX, LTHR, msp.LB1, msp.LB2)
 
     imposed_Siz     = compute_imposed_Siz(x_center, msp.SIZMAX, msp.LSIZ1, msp.LSIZ2)
 

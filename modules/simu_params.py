@@ -61,14 +61,14 @@ class SimuParameters():
         # Magnetic field configuration
         MagneticFieldConfig = config["Magnetic field configuration"]
 
-        if MagneticFieldConfig["Type"] == "Default":
-            print(MagneticFieldConfig["Type"] + " Magnetic Field")
 
-            self.BMAX = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
-            self.B0 = float(MagneticFieldConfig["B-field at 0"])  # Mag field at x=0
-            self.BLX = float(MagneticFieldConfig["B-field at LX"])  # Mag field at x=LX
-            self.LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
-            self.LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
+        print(MagneticFieldConfig["Type"] + " Magnetic Field")
+        self.BTYPE  = MagneticFieldConfig["Type"]
+        self.BMAX = float(MagneticFieldConfig["Max B-field"])  # Max Mag field
+        self.B0 = float(MagneticFieldConfig["B-field at 0"])  # Mag field at x=0
+        self.BLX = float(MagneticFieldConfig["B-field at LX"])  # Mag field at x=LX
+        self.LB1 = float(MagneticFieldConfig["Length B-field 1"])  # Length for magnetic field
+        self.LB2 = float(MagneticFieldConfig["Length B-field 2"])  # Length for magnetic field
 
 
         # Ionization source term configuration

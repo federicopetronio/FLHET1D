@@ -267,7 +267,7 @@ if __name__ == '__main__':
     LTHR    = msp.LTHR
     KEL     = msp.KEL
     Rext        = msp.Rext
-    V           = msp.V
+    V0           = msp.V0
     boolCircuit = msp.Circuit    
     HEATFLUX    = msp.HEATFLUX
     boolIonColl = msp.boolIonColl
@@ -329,18 +329,19 @@ if __name__ == '__main__':
 
     Current = np.zeros(np.shape(files)[0])
     CurrentDensity = np.zeros(np.shape(files)[0])
-    Voltage = np.full(np.shape(files)[0], V)
+    Voltage = np.zeros(np.shape(files)[0])
     time    = np.zeros(np.shape(files)[0])
 
     for i_save, file in enumerate(files):
         
         with open(file, 'rb') as f:
-            [t, P, U, P_LeftGhost, P_RightGhost, J, Efield] = pickle.load(f)
+            [t, P, U, P_LeftGhost, P_RightGhost, J, Efield, V] = pickle.load(f)
         
         # Save the current
         Current[i_save] = J
         CurrentDensity[i_save] = np.mean(P[1,:]*phy_const.e*(P[2,:] - P[4,:]))
         time[i_save]    = t
+        Voltage[i_save] = V
 
     #####################################
     #           Plot current
@@ -389,7 +390,7 @@ if __name__ == '__main__':
         print("Preparing plot for i = ", i_save)
 
         with open(file, 'rb') as f:
-            [t, P, U, P_LeftGhost, P_RightGhost, J, Efield] = pickle.load(f)
+            [t, P, U, P_LeftGhost, P_RightGhost, J, Efield, V] = pickle.load(f)
 
         phi = compute_phi(Efield, Delta_x, J, V, Rext)
         

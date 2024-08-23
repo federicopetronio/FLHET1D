@@ -38,7 +38,7 @@ class SimuParameters():
         self.NI0 = float(physicalParameters["Initial plasma density"]) # Initial plasma density.
         #NG0 = float(physicalParameters["Initial neutrals density"]) # Initial neutrals density. No need for this parameter it is processed to have be coehrent with MDOT, AO and VG.
         self.Rext = float(physicalParameters["Ballast resistor"])  # Resistor of the ballast
-        self.V = float(physicalParameters["Voltage"])  # Potential difference
+        self.V0 = float(physicalParameters["Voltage"])  # Potential difference
         
         self.Circuit = bool(
             config.getboolean("Physical Parameters", "Circuit", fallback=False)
@@ -47,6 +47,10 @@ class SimuParameters():
             self.R = float(physicalParameters["R"])
             self.L = float(physicalParameters["L"])
             self.C = float(physicalParameters["C"])
+
+        self.boolPresureDiv = bool(
+            config.getboolean("Physical Parameters", "pressure div in energy equation", fallback=False)
+        ) # is dp/dx * u_e  accounted in the energy equation
 
         self.HEATFLUX = bool(
             config.getboolean("Physical Parameters", "Electron heat flux", fallback=False)

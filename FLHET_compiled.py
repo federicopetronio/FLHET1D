@@ -66,6 +66,7 @@ def compute_B_array_default(fx_center, fBMAX, fLTHR, fLB1, fLB2):
     Barr    = np.where(fx_center < fLTHR, Barr, fBMAX * np.exp(-(((fx_center - fLTHR) / fLB2) ** 2.0)))  # Magnetic field outside the thruster
     return Barr
 
+
 def compute_alphaB_array(fxcenter, falphaB1, falphaB2, fLTHR, fNBPOINTS_INIT):
 
     NBPOINTS = fxcenter.shape[0]
@@ -280,7 +281,7 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
 
 
 @njit
-def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, fgamma_i, fEinj):
+def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, fboolPressureDiv, fgamma_i, fEinj):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -352,8 +353,11 @@ def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_ty
         )  # Effective mobility
 
     #div_u   = gradient(ve, d=Delta_x)               # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
-    div_p = gradient(phy_const.e*ni*Te, fx_center) # To be used with 5./2 and + div_p*ve in line 231    
-    # div_p = np.zeros(Te.shape)
+    
+    if fboolPressureDiv:
+        div_p = gradient(phy_const.e*ni*Te, fx_center) # To be used with 5./2 and + div_p*ve in line 231    
+    else:
+        div_p = np.zeros(Te.shape) #this line to match the old version of the code.
 
     fS[0, :] = (-d_IC * Siz_arr + nu_iw * ni) * fMi # Gas Density
     fS[1, :] = (Siz_arr - nu_iw * ni) * fMi # Ion Density
@@ -598,8 +602,6 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
         nu_iw = np.zeros(Te.shape, dtype=float)     # Ion - wall collision rate
         nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
 
-    nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
-
     # Electron momentum - transfer collision frequency
     nu_m = ng * fKEL + falpha_B * wce + nu_ew
 
@@ -624,8 +626,8 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
     value_trapz_2 = np.trapz((1.0 / (mu_eff * ni)) , fx_center)
     bottom = phy_const.e * fA0 * fRext + value_trapz_2
 
-    I0 = top / bottom  # Discharge current density
-    return I0 * phy_const.e * fA0
+    J0 = top / bottom  # Discharge current density
+    return J0 * phy_const.e * fA0
 
 
 @njit
@@ -647,7 +649,8 @@ def SetInlet(fP_LeftColumn, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA
     fU_ghost[1] = fP_LC[1] * fMi
     fU_ghost[2] = -2.0 * fP_LC[1] * U_Bohm* fMi - fP_LC[1] * fP_LC[2] * fMi     # so that 0.5*(U_ghost[2] + U_LC[2]) = - u_B * U_LC[1] 
     # fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * fP_LC[3]
-    fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * 10.0 # Test. TODO: change so that in average, T_e = 10.0 eV. Here not the case. 
+    #fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * 10.0     # Test. TODO: change so that in average, T_e = 10.0 eV. Here not the case.
+    fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * fP_LC[3] # it is this way to try and reproduce mazallon PPS1350
     # kappa_wall = phy_const.e**2 * fP_LC[1] * fP_LC[3] * 2.38408574e+23 # Test with only anomalous transport
     # Delta_x = 0.000125
     # T_Ghost = fP_LC[1]*U_Bohm*(2*phy_const.e*fP_LC[3])*Delta_x/kappa_wall
@@ -732,8 +735,10 @@ def NumericalFlux(fP, fU, fF_cell, fF_interf, fNBPOINTS, fMi, fVG):
     ) - 0.5 * lambda_max_e_12 * (fU[3, 1 : fNBPOINTS + 2] - fU[3, 0 : fNBPOINTS + 1])
 
 
-@njit
-def ComputeDelta_t(fP, fNBPOINTS, fMi, fCFL, fDelta_x):
+#@njit
+def ComputeDelta_t(fP, fNBPOINTS, fMi, fCFL, fx_center_ext):
+
+    x_ext  = fx_center_ext # renaming for elegance
 
     # Compute the max eigenvalue
     lambda_max_i_R = computeMaxEigenVal_i(fP[:, 1 : fNBPOINTS + 2], fMi)
@@ -745,7 +750,8 @@ def ComputeDelta_t(fP, fNBPOINTS, fMi, fCFL, fDelta_x):
     lambda_max_e_12 = np.maximum(lambda_max_e_L, lambda_max_e_R)
 
     # Delta_t = fCFL * fDelta_x / (max(max(lambda_max_e_12), max(lambda_max_i_12)))
-    Delta_t = fCFL * min(fDelta_x / np.maximum(lambda_max_e_R[:-1],  lambda_max_e_R[:-1]))
+    Delta_t = fCFL * min((x_ext[1:] - x_ext[:-1]) / np.maximum(lambda_max_e_12,  lambda_max_i_12))
+
     return Delta_t
 
 
@@ -766,14 +772,14 @@ def MakeTheResultsDir(fResults):
         os.makedirs(ResultsData)
 
 
-def SaveVariantData(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield,ftime, fi_save):
+def SaveVariantData(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield, fV, ftime, fi_save):
 
     ResultsData = fResults + "/Data"
 
     # Save the data
     filenameTemp = ResultsData + "/MacroscopicVars_" + f"{fi_save:06d}" + ".pkl"
     pickle.dump(
-        [ftime, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield], open(filenameTemp, "wb")
+        [ftime, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield, fV], open(filenameTemp, "wb")
     )  # TODO: Save the current and the electric field
 
 
@@ -846,11 +852,12 @@ def main(fconfigfile):
     Einj        = msp.Einj
     Rext        = msp.Rext
     Te_Cath     = msp.Te_Cath
+    boolPressureDiv     = msp.boolPresureDiv # is dp/dx * u_e  accounted in the energy equation
     CFL         = msp.CFL
     HEATFLUX    = msp.HEATFLUX
     IMPlICIT    = msp.IMPlICIT
     boolCircuit = msp.Circuit
-    V           = msp.V
+    V           = msp.V0
     START_FROM_INPUT  = msp.START_FROM_INPUT
     if START_FROM_INPUT:
         INPUT_DIR  = msp.INPUT_DIR
@@ -877,7 +884,10 @@ def main(fconfigfile):
     x_mesh, x_center, Delta_x, x_center_extended, Delta_x_extended = msp.return_tiled_domain()
     NBPOINTS = np.shape(x_center)[0]
 
-    Barr = compute_B_array_Charoy(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
+    if msp.BTYPE == 'CharoyBenchmark':
+        Barr = compute_B_array_Charoy(x_center, msp.BMAX, msp.B0, msp.BLX, msp.LX, LTHR, msp.LB1, msp.LB2)
+    else:
+        Barr = compute_B_array_default(x_center, msp.BMAX, LTHR, msp.LB1, msp.LB2)
 
     alpha_B1, alpha_B2  = msp.extract_anom_coeffs()
     alpha_B = compute_alphaB_array(x_center, alpha_B1, alpha_B2, LTHR, msp.NBPOINTS_INIT)
@@ -959,7 +969,7 @@ def main(fconfigfile):
         R = msp.R
         L = msp.L
         C = msp.C
-        V0 = msp.V
+        V0 = msp.V0
         print(f"~~~~~~~~~~~~~~~~ Circuit: R = {R:.2e} Ohm")
         print(f"~~~~~~~~~~~~~~~~ Circuit: L = {L:.2e} H")
         print(f"~~~~~~~~~~~~~~~~ Circuit: C = {C:.2e} F")
@@ -1012,7 +1022,7 @@ def main(fconfigfile):
             if (iter % SAVERATE) == 0:
                 # Compute the electric field.
                 Efield = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)                
-                SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
+                SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, V, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -1033,7 +1043,7 @@ def main(fconfigfile):
             InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
             # Compute the convective Delta t
-            Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+            Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, x_center_extended)
             #print(Delta_t)
             # Compute the Numerical at the interfaces
             NumericalFlux(
@@ -1047,11 +1057,11 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                 Delta_t = min(dt_HF, Delta_t)
-            if HEATFLUX and IMPlICIT:
+            elif HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
                 Te = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 print(Te)
@@ -1086,7 +1096,7 @@ def main(fconfigfile):
             if (iter % SAVERATE) == 0:
                 # Compute the electric field.
                 Efield = compute_E(P, Barr, ESTAR, wall_inter_type, R1, R2, Mi, x_center, LTHR, KEL, alpha_B)
-                SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
+                SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, V, time, i_save)
                 i_save += 1
                 print(
                     "Iter = ",
@@ -1117,7 +1127,7 @@ def main(fconfigfile):
             # Compute the Fluxes in the center of the cell
             InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
             # Compute the convective Delta t (Only in the first step)
-            Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+            Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, x_center_extended)
 
             # Compute the Numerical at the interfaces
             NumericalFlux(
@@ -1131,13 +1141,13 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
 
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                 Delta_t = min(dt_HF, Delta_t)
             # First half step of strang-splitting
-            if HEATFLUX and IMPlICIT:
+            elif HEATFLUX and IMPlICIT:
                 dt_HF = Delta_t
                 P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
@@ -1196,7 +1206,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                
@@ -1253,7 +1263,7 @@ def main(fconfigfile):
                 VG
             )
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 
@@ -1323,7 +1333,7 @@ def main(fconfigfile):
                         file.write("\n")  # Add a newline at the end (optional)
             iter += 1
     # Saves the last frame
-    SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, time, i_save)
+    SaveVariantData(Resultsdir, P, U, P_LeftGhost, P_RightGhost, J, Efield, V, time, i_save)
     i_save += 1
     print(
         "Iter = ",
@@ -1374,6 +1384,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     Rext        = msp.Rext
     Te_Cath     = msp.Te_Cath
     CFL         = msp.CFL
+    boolPressureDiv     = msp.boolPresureDiv
     HEATFLUX    = msp.HEATFLUX
     IMPlICIT    = msp.IMPlICIT
     boolCircuit = msp.Circuit
@@ -1500,7 +1511,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
 
                     # Compute the convective Delta t
-                    Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+                    Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, x_center_extended)
                     #print(Delta_t)
                     # Compute the Numerical at the interfaces
                     NumericalFlux(
@@ -1514,7 +1525,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                         Delta_t = min(dt_HF, Delta_t)
@@ -1565,7 +1576,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     # Compute the Fluxes in the center of the cell
                     InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
                     # Compute the convective Delta t (Only in the first step)
-                    Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, Delta_x)
+                    Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, x_center_extended)
                     if iter == 0:
                         Delta_t = Delta_t/3
                     # Compute the Numerical at the interfaces
@@ -1580,7 +1591,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
 
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
@@ -1646,7 +1657,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                     
@@ -1703,7 +1714,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         VG
                     )
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 

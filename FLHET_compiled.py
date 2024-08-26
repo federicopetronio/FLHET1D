@@ -197,6 +197,14 @@ def InviscidFlux(P, F):
     )  # M*n_i*v_i**2 + p_e
     F[3, :] = 5.0 / 2.0 * P[1, :] * phy_const.e * P[3, :] * P[4, :]  # 5/2n_i*e*T_e*v_e
 
+@njit
+def gradient(y, d):
+    dp_dz = np.empty_like(y)
+    dp_dz[1:-1] = (y[2:] - y[:-2]) / (2 * d)
+    dp_dz[0] = 2 * dp_dz[1] - dp_dz[2]
+    dp_dz[-1] = 2 * dp_dz[-2] - dp_dz[-3]
+
+    return dp_dz
 
 @njit
 def Source(P, S):
@@ -258,8 +266,9 @@ def Source(P, S):
         1.0 / (1 + (wce / nu_m) ** 2)
     )  # Effective mobility
 
-    # DeltaG = Gamma_e / ni
-    # grdI = gradient(DeltaG, dz)
+    div_p = gradient(
+        phy_const.e * ni * Te, d=Delta_x
+    )  # To be used with 5./2 and + div_p*ve below
 
     S[0, :] = (-ng[:] * ni[:] * Kiz[:] + nu_iw[:] * ni[:]) * M  # Gas Density
     S[1, :] = (ng[:] * ni[:] * Kiz[:] - nu_iw[:] * ni[:]) * M  # Ion Density
@@ -271,8 +280,9 @@ def Source(P, S):
     S[3, :] = (
         -ng[:] * ni[:] * Kiz[:] * Eion * gamma_i * phy_const.e
         - nu_ew[:] * ni[:] * Ew * phy_const.e
-        + 1.0 / mu_eff[:] * (ni[:] * ve[:]) ** 2.0 / ni[:] * phy_const.e
-    )  # - gradI_term*ni*Te*grdI          # Energy
+        + ni[:] / mu_eff[:] * (ve[:]) ** 2.0 * phy_const.e
+        + div_p * ve
+    )  # + phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy
 
 
 # Compute the Current

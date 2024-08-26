@@ -14,8 +14,8 @@ generate_config_and_run() {
     local indiceY=$2 
 
     #Define the alpha_B1 and alpha_B2 values ###TO CHANGE###
-    alphaB1=$(awk "BEGIN { printf \"%.6f\", 0.0065 + $indiceX / 10000 }")  
-    alphaB2=$(awk "BEGIN { printf \"%.6f\", 0.0065 + $indiceY / 10000 }") 
+    alphaB1=$(awk "BEGIN { printf \"%.6f\", 0.010 + $indiceX / 1000 }")  
+    alphaB2=$(awk "BEGIN { printf \"%.6f\", 0.010 + $indiceY / 1000 }") 
     # Define the output filename for each iteration4
     out_filename="Results_1D/$thruster/$model/config_modif_cp_${indiceX}_${indiceY}.ini"
     

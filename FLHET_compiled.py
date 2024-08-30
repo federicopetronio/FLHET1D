@@ -281,7 +281,7 @@ def compute_E(fP, fB, fESTAR, wall_inter_type:str, fR1, fR2, fM, fx_center, fLTH
 
 
 @njit
-def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, fboolPressureDiv, fgamma_i, fEinj):
+def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, fboolPressureDiv, fgamma_i, fTe_inj):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -367,7 +367,7 @@ def Source(fP, fS, fBarr, fisSourceImposed, fEion, fenableIonColl, wall_inter_ty
         - nu_iw * ni * vi
         ) * fMi # Momentum
     fS[3,:] = (
-        - d_IC * Siz_arr * fEion * fgamma_i * phy_const.e  +  (1.0 - d_IC)*Siz_arr*fEinj
+        - d_IC * Siz_arr * fEion * fgamma_i * phy_const.e  +  (1.0 - d_IC)*Siz_arr* 1.5 * fTe_inj* phy_const.e
         - nu_ew * ni * Ew * phy_const.e
         + (1./mu_eff) * ni * ve**2 * phy_const.e
         + div_p*ve
@@ -631,7 +631,7 @@ def compute_I(fP, fV, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR
 
 
 @njit
-def SetInlet(fP_LeftColumn, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA0, fVG, fTe_cath, fJ=0.0, moment=1):
+def SetInlet(fP_LeftColumn, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA0, fVG, fTE0, fJ=0.0, moment=1):
     #TODO: change the Dirichlet BCs so that a fixed value s is achieved in the frontier x=0. So the ghost value must be s_g = 2*s - s[0], where s[0] is the left value of the bulk array. Currently only v_i is computed this way to achieve the Bohm velocity at the frontier. It is not the case for n_g and T_e.
     fP_LC   = fP_LeftColumn     # renaming for more elegance 
 
@@ -649,7 +649,7 @@ def SetInlet(fP_LeftColumn, fU_ghost, fP_ghost, fMi, fisSourceImposed, fMDOT, fA
     fU_ghost[1] = fP_LC[1] * fMi
     fU_ghost[2] = -2.0 * fP_LC[1] * U_Bohm* fMi - fP_LC[1] * fP_LC[2] * fMi     # so that 0.5*(U_ghost[2] + U_LC[2]) = - u_B * U_LC[1] 
     # fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * fP_LC[3]
-    #fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * 10.0     # Test. TODO: change so that in average, T_e = 10.0 eV. Here not the case.
+    #fU_ghost[3] = 3.0 * fP_LC[1] * phy_const.e * fTE0 - 3./2. * fP_LC[1] * phy_const.e * fP_LC[3]     # so that the average of the ghost and the cell index 0 is 3/2*rho_i[0]*e*TE0
     fU_ghost[3] = 3.0 / 2.0 * fP_LC[1] * phy_const.e * fP_LC[3] # it is this way to try and reproduce mazallon PPS1350
     # kappa_wall = phy_const.e**2 * fP_LC[1] * fP_LC[3] * 2.38408574e+23 # Test with only anomalous transport
     # Delta_x = 0.000125
@@ -675,6 +675,7 @@ def SetOutlet(fP_RightColumn, fU_ghost, fP_ghost, fMi, fA0, fTe_Cath, J=0.0):
     fU_ghost[1] = fP_RC[1] * fMi
     fU_ghost[2] = fP_RC[1] * fP_RC[2] * fMi
     fU_ghost[3] = 3.0 / 2.0 * fP_RC[1] * phy_const.e * fTe_Cath
+    # fU_ghost[3] = 3.0 * fP_RC[1] * phy_const.e * fTe_Cath - 3./2. * fP_RC[1] * phy_const.e * fP_RC[3] # so that the average temperature between the last cell and the ghost cell is Te_cath
 
     fP_ghost[0] = fU_ghost[0] / fMi # ng
     fP_ghost[1] = fU_ghost[1] / fMi # ni
@@ -849,10 +850,10 @@ def main(fconfigfile):
     boolSizImposed  = msp.boolSizImposed
     Eion        = msp.Eion
     gamma_i     = msp.gamma_i
-    Einj        = msp.Einj
+    Te_inj        = msp.Te_inj
     Rext        = msp.Rext
     Te_Cath     = msp.Te_Cath
-    boolPressureDiv     = msp.boolPresureDiv # is dp/dx * u_e  accounted in the energy equation
+    boolPressureDiv     = msp.boolPressureDiv # is dp/dx * u_e  accounted in the energy equation
     CFL         = msp.CFL
     HEATFLUX    = msp.HEATFLUX
     IMPlICIT    = msp.IMPlICIT
@@ -1057,7 +1058,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                 Delta_t = min(dt_HF, Delta_t)
@@ -1141,7 +1142,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
 
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
@@ -1206,7 +1207,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                
@@ -1263,7 +1264,7 @@ def main(fconfigfile):
                 VG
             )
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+            Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 
@@ -1380,7 +1381,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
     boolSizImposed  = msp.boolSizImposed
     Eion        = msp.Eion
     gamma_i     = msp.gamma_i
-    Einj        = msp.Einj
+    Te_inj        = msp.Te_inj
     Rext        = msp.Rext
     Te_Cath     = msp.Te_Cath
     CFL         = msp.CFL
@@ -1525,7 +1526,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                         Delta_t = min(dt_HF, Delta_t)
@@ -1591,7 +1592,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
 
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
@@ -1657,7 +1658,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                     )
 
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
                     
@@ -1714,7 +1715,7 @@ def main_alphaB_param_study(fconfigFile, falpha_B1_arr, falpha_B2_arr):
                         VG
                     )
                     # Compute the source in the center of the cell
-                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Einj)
+                    Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
                     if HEATFLUX and not IMPlICIT:
                         dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
 

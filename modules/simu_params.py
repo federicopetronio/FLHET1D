@@ -48,7 +48,7 @@ class SimuParameters():
             self.L = float(physicalParameters["L"])
             self.C = float(physicalParameters["C"])
 
-        self.boolPresureDiv = bool(
+        self.boolPressureDiv = bool(
             config.getboolean("Physical Parameters", "pressure div in energy equation", fallback=False)
         ) # is dp/dx * u_e  accounted in the energy equation
 
@@ -89,12 +89,12 @@ class SimuParameters():
         try:
             self.Eion   = float(IonizationConfig["ionization energy"])
             self.gamma_i= float(IonizationConfig["coefficient gamma_i"])
-            self.Einj= float(IonizationConfig["injected e- temperature"])
+            self.Te_inj = float(IonizationConfig["injected e- temperature"])
         except KeyError:
             print("\tUserWarning: the config file " + fconfigfile + " does not specify all three of the parameters 'ionization energy', 'coefficient gamma_i' and 'injection e- temperature'. It may be a config file suited for an older version of the code. Default values for these values are used.")
             self.Eion   = 12.1
             self.gamma_i= 3.0
-            self.Einj   = 10.
+            self.Te_inj    = 10.
 
         # Collisions parameters
         CollisionsConfig = config["Collisions"]

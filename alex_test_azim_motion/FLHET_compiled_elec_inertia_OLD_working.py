@@ -297,17 +297,19 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
     fS[2, :] = (
         d_IC * Siz_arr * fVG * fMi
         # - (phy_const.e / (mu_eff[:] * fMi)) * ni * ve
-        - (phy_const.m_e * ni * nu_m * ve)
+        # - (phy_const.m_e * ni * nu_m * ve) # this can be safely commented, the simulation works
         - phy_const.e * ni * fBarr * Ue_y
         - nu_iw * ni * vi * fMi
         )  # Momentum
     fS[3,:] = (
         - d_IC * Siz_arr * Eion * gamma_i * phy_const.e
         - nu_ew * ni * Ew * phy_const.e
-        - phy_const.m_e * ni * nu_m * (ve**2 + Ue_y**2)
+        # - phy_const.m_e * ni * nu_m * (ve**2 + Ue_y**2)
+        # - phy_const.m_e * ni * nu_m * (ve**2)
         - phy_const.e * ni * E_x * ve
-        + phy_const.e * ni * fBarr * ve * Ue_y
-        + Siz_arr * phy_const.e * 10.
+        # - phy_const.e * ni * fBarr * ve * Ue_y
+        + 1.5 * Siz_arr * phy_const.e * 10. # 1.5 can be safely, the simulation works
+        - 0.5 * Siz_arr * phy_const.m_e * Ue_y**2 # new term
     )
     fS[4, :] = (
         - (phy_const.m_e * ni * nu_m * Ue_y)

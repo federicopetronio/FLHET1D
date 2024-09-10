@@ -290,7 +290,8 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
     #div_u   = gradient(ve, d=Delta_x)             # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
     div_p = gradient(phy_const.e*ni*Te, fx_center) # To be used with 5./2 and + div_p*ve in line 231    
 
-    E_x = - Ue_y * fBarr - phy_const.m_e / phy_const.e * nu_m * ve - div_p / (phy_const.e * ni)
+    # E_x = - Ue_y * fBarr - phy_const.m_e / phy_const.e * nu_m * ve - div_p / (phy_const.e * ni)
+    E_x = - Ue_y * fBarr - div_p / (phy_const.e * ni)
 
     fS[0, :] = (-d_IC * Siz_arr + nu_iw * ni) * fMi # Gas Density
     fS[1, :] = (Siz_arr - nu_iw * ni) * fMi # Ion Density

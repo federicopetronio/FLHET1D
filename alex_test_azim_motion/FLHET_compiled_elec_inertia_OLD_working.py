@@ -514,7 +514,7 @@ def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1
 
 # Compute the Current
 # @njit
-def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, old_curr = True):
+def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, fDelta_t, old_curr = True, n_old_U_ey_old = 0.0):
 
     from scipy import integrate
     from scipy import interpolate
@@ -586,11 +586,17 @@ def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1,
         div_mnuxuy = gradient(me*ni*ve*Ue_y, fx_center)
         div_uey = gradient(Ue_y, fx_center)
 
+        if np.sum(n_old_U_ey_old) == 0.0:
+            n_old_U_ey_old = np.copy(ni * Ue_y)
+        dt_m_n_uey = phy_const.m_e * (ni * Ue_y - n_old_U_ey_old) / fDelta_t
+        # print("div_mnuxuy", div_mnuxuy[-4:])
+        # print("dt_m_n_uey", dt_m_n_uey[-4:])
+
         RieX = -phy_const.m_e * nu_m * ni * ve
         RieY = -phy_const.m_e * nu_m * ni * Ue_y
 
         Term_1 = Ue_y * fBarr + div_p / (ni) - RieX / (phy_const.e * ni) + vi * fBarr
-        Term_1 += RieY / (phy_const.e * ni) - div_mnuxuy / (phy_const.e * ni)
+        Term_1 += RieY / (phy_const.e * ni) - div_mnuxuy / (phy_const.e * ni) - dt_m_n_uey / (phy_const.e * ni)
         # print("2 Term_1: " Term_1[-4:])
         # print("2 Ue_y: ", (Ue_y* fBarr)[-4:])
         # print("2 div_p: ", (div_p / (ni))[-4:])
@@ -931,6 +937,8 @@ def main(fconfigfile):
     ### Warning, in the code currently, neutrals dyanmic is canceled.
     P[0,:] = P_init[0]
 
+    n_old_U_ey_old = np.copy(P[1,:] * P[5,:])
+
     ######################################################################
 
     # ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
@@ -962,8 +970,8 @@ def main(fconfigfile):
     ##########################################################################################
 
     if TIMESCHEME == "Forward Euler":
-        J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
-        J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, False)
+        J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
+        J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
         print(f"J_1 = {J:.3e} A")
         print(f"J_1_temp = {J_1_temp:.3e} A")
         print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
@@ -981,8 +989,8 @@ def main(fconfigfile):
                     "\tI = {:.4f}~A".format(J),
                     "\tJ = {:.3e} A/m2".format(J/A0),
                 )
-                J_0_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
-                J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, False)
+                J_0_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
+                J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
                 print(f"J_0_temp = {J_0_temp:.3e} A")
                 print(f"J_1_temp = {J_1_temp:.3e} A")
                 print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
@@ -1033,8 +1041,8 @@ def main(fconfigfile):
             )
 
             # Compute the current
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, False)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
             # print(f"J_1 = {J:.3e} A")
             # print(f"J_1_temp = {J_1_temp:.3e} A")
             # print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
@@ -1047,6 +1055,8 @@ def main(fconfigfile):
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)
+
+            n_old_U_ey_old = np.copy(P[1,:] * P[5,:])
 
             # Prevent the energy to be strictly negative
             P[3,:] = np.where(P[3,:] >= T_min, P[3,:], T_min)
@@ -1086,7 +1096,7 @@ def main(fconfigfile):
             # Copy the solution to store it
             U_1[:, :] = U[:, :]
             ConsToPrim(U_1, P_1, Mi, A0, J)
-            J_1 = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J_1 = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
             ConsToPrim(U_1, P_1, Mi, A0, J_1)
 
             # Set the boundaries
@@ -1136,7 +1146,7 @@ def main(fconfigfile):
             )
 
             # Compute the current
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)
@@ -1196,7 +1206,7 @@ def main(fconfigfile):
             )
 
             # Compute the current
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
             
 
             # Compute the primitive vars for next step
@@ -1262,7 +1272,7 @@ def main(fconfigfile):
                 U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
 
             # Compute the current
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)

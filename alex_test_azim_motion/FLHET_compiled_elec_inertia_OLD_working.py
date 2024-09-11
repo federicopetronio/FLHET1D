@@ -514,7 +514,7 @@ def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1
 
 # Compute the Current
 # @njit
-def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext):
+def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, old_curr = True):
 
     from scipy import integrate
     from scipy import interpolate
@@ -551,88 +551,72 @@ def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1,
         nu_ew = np.zeros(Te.shape, dtype=float)     # Electron - wall collision rate
 
     nu_ew = nu_iw / (1 - sigma)  # Electron - wall collision rate
+    if old_curr:
+        # Electron momentum - transfer collision frequency
+        nu_m = ng * fKEL + falpha_B * wce + nu_ew
 
-    # Electron momentum - transfer collision frequency
-    nu_m = ng * fKEL + falpha_B * wce + nu_ew
+        div_p = gradient(ni*Te, fx_center)
 
-    mu_eff = (phy_const.e / (me* nu_m)) * (
-        1.0 / (1 + (wce / nu_m) ** 2)
-    )  # Effective mobility
+        Term_1 = + Ue_y * fBarr + phy_const.m_e / phy_const.e * nu_m * vi + div_p / (ni)
+        # print("1 Term_1: ", Term_1[-4:])
+        # print("1 Ue_y: ", (Ue_y* fBarr)[-4:])
+        # print("1 vi: ", (phy_const.m_e / phy_const.e * nu_m * vi)[-4:])
+        # print("1 div_p: ", (div_p / (ni))[-4:])
+        # print("1 div_p: ", ((div_p / (ni * phy_const.e))[-4:]))
+        value_simpson_1  = integrate.simpson(Term_1 , x=fx_center)
+        top = fV + value_simpson_1
+        # print("1 value_simpson_1", value_simpson_1)
+        # print("1 top: ", top)
+        # print("1 V0: ", fV)
 
-    div_p = gradient(ni*Te, fx_center) # To be used with 5./2 and + div_p*ve in line 231    
+        Term_2 = phy_const.m_e / phy_const.e * nu_m / ni
+        # print("1 Term_2: ", Term_2[-4:])
+        value_simpson_2  = integrate.simpson(Term_2 , x=fx_center)
+        # print("1 value_simpson_2", value_simpson_2)
+        bottom = phy_const.e * fA0 * fRext + value_simpson_2
+        # print("1 bottom", bottom)
 
-    Term_1 = + Ue_y * fBarr + phy_const.m_e / phy_const.e * nu_m * vi + div_p / (ni)
+        I0 = top / bottom  # Discharge current density
 
-    
-    # value_trapz_1 = (
-    #     np.sum(
-    #         ( (Term_1)[1:] + (Term_1)[:-1] ) * (fx_center[1:] - fx_center[:-1]) / 2.0
-    #         ) 
-    # )
-    # value_trapz_1 = np.trapz(Term_1 , fx_center)
-    value_simpson_1  = integrate.simpson(Term_1 , x=fx_center)
-    top = fV + value_simpson_1
-    # top = fV + value_trapz_1
+        I0 = (I0 * phy_const.e * fA0)
+    else:
+        nu_m = ng * fKEL + falpha_B * wce + nu_ew
 
-    Term_2 = phy_const.m_e / phy_const.e * nu_m / ni
+        div_p = gradient(ni*Te, fx_center)
+        div_mnuxuy = gradient(me*ni*ve*Ue_y, fx_center)
+        div_uey = gradient(Ue_y, fx_center)
 
-    # value_trapz_2 = np.trapz(Term_2 , fx_center)
-    value_simpson_2  = integrate.simpson(Term_2 , x=fx_center)
-    bottom = phy_const.e * fA0 * fRext + value_simpson_2
-    # bottom = phy_const.e * fA0 * fRext + value_trapz_2
+        RieX = -phy_const.m_e * nu_m * ni * ve
+        RieY = -phy_const.m_e * nu_m * ni * Ue_y
 
-    I0 = top / bottom  # Discharge current density
+        Term_1 = Ue_y * fBarr + div_p / (ni) - RieX / (phy_const.e * ni) + vi * fBarr
+        Term_1 += RieY / (phy_const.e * ni) - div_mnuxuy / (phy_const.e * ni)
+        # print("2 Term_1: " Term_1[-4:])
+        # print("2 Ue_y: ", (Ue_y* fBarr)[-4:])
+        # print("2 div_p: ", (div_p / (ni))[-4:])
+        # print("2 RieX: ", (RieX / (phy_const.e * ni))[-4:])
+        # print("2 vi: ", (vi * fBarr)[-4:])
+        # print("2 RieY: ", (RieY / (phy_const.e * ni))[-4:])
+        # print("2 div_mnuxuy: ", (div_mnuxuy / (phy_const.e * ni))[-4:])
 
-    I0 = (I0 * phy_const.e * fA0)
+        value_simpson_1 = integrate.simpson(Term_1 , x=fx_center)
+        top = fV + value_simpson_1
+        # print("2 value_simpson_1", value_simpson_1)
+        # print("2 top: ", top)
 
-    # # exit()
-    # # I0 = (I0 * phy_const.e * fA0) 
-    # # print(I0)
-    # print(top)
-    # print(bottom)
-    # print(fA0)
-    # print("Simpson I ", I0)
+        Term_2 = fBarr / ni - phy_const.electron_mass * div_uey / (phy_const.e * ni)
+        # print("2 Term_2: ", Term_2[-4:])
+        # print("2 fBarrr: ", (fBarr / ni)[-4:])
+        # print("2 div_uey: ", (div_uey / (phy_const.e * ni))[-4:])
 
-    # exit()
+        value_simpson_2 = integrate.simpson(Term_2 , x=fx_center)
+        # print("2 value_simpson_2", value_simpson_2)
+        bottom = phy_const.e * fA0 * fRext + value_simpson_2
+        # print("2 bottom", bottom)
 
-    # return max(I0, 0)
+        I0 = top / bottom  # Discharge current density
+        I0 = (I0 * phy_const.e * fA0)
 
-    # ##################################################
-    # #               Test
-    # ##################################################
-
-    # # Electron momentum - transfer collision frequency
-    # nu_m = ng * fKEL + falpha_B * wce + nu_ew
-
-    # mu_eff = (phy_const.e / (me* nu_m)) * (
-    #     1.0 / (1 + (wce / nu_m) ** 2)
-    # )  # Effective mobility
-
-    # dp_dz = gradient(ni*Te, fx_center)
-
-    # value_trapz_1 = (
-    #     np.sum(
-    #         ( (vi / mu_eff + dp_dz / ni)[1:] + (vi / mu_eff + dp_dz / ni)[:-1] ) * (fx_center[1:] - fx_center[:-1]) / 2.0
-    #         ) 
-    # )
-    # top = fV + value_trapz_1
-
-    # value_trapz_2 = (
-    #     np.sum(
-    #         ((1.0 / (mu_eff * ni))[1:] + (1.0 / (mu_eff * ni))[:-1]) * (fx_center[1:] - fx_center[:-1]) / 2.0
-    #         ) 
-    # )
-    # value_trapz_2 = np.trapz((1.0 / (mu_eff * ni)) , fx_center)
-    # bottom = phy_const.e * fA0 * fRext + value_trapz_2
-
-    # I0_0ld = top / bottom  # Discharge current density
-
-    # I0_0ld = (I0_0ld * phy_const.e * fA0)
-
-    # print("Old = ", I0_0ld)
-    # print("Ratio = ", I0/I0_0ld)
-
-    # return max(I0, 0)
     return I0
 
 @njit
@@ -979,6 +963,12 @@ def main(fconfigfile):
 
     if TIMESCHEME == "Forward Euler":
         J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+        J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, False)
+        print(f"J_1 = {J:.3e} A")
+        print(f"J_1_temp = {J_1_temp:.3e} A")
+        print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
+
+
         while time < TIMEFINAL:
             # Save results
             if (iter % SAVERATE) == 0:
@@ -991,6 +981,11 @@ def main(fconfigfile):
                     "\tI = {:.4f}~A".format(J),
                     "\tJ = {:.3e} A/m2".format(J/A0),
                 )
+                J_0_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+                J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, False)
+                print(f"J_0_temp = {J_0_temp:.3e} A")
+                print(f"J_1_temp = {J_1_temp:.3e} A")
+                print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
                 # Another way of processing J_d which is equivalent to J_d = I / A0
                 #j_of_x = P[1,:]*phy_const.e*(P[2,:] - P[4,:])
                 #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
@@ -1039,6 +1034,16 @@ def main(fconfigfile):
 
             # Compute the current
             J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, False)
+            # print(f"J_1 = {J:.3e} A")
+            # print(f"J_1_temp = {J_1_temp:.3e} A")
+            # print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
+
+            # plt.figure()
+            # plt.plot(x_center, P[1,:]* phy_const.e * A0 * (P[2,:] - P[4,:]))
+            # plt.title("Current density")
+            # plt.show()
+            # sys.exit()
 
             # Compute the primitive vars for next step
             ConsToPrim(U, P, Mi, A0, J)

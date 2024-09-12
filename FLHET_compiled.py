@@ -781,7 +781,7 @@ def SaveVariantData(fResults, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield, 
     filenameTemp = ResultsData + "/MacroscopicVars_" + f"{fi_save:06d}" + ".pkl"
     pickle.dump(
         [ftime, fP, fU, fP_LeftGhost, fP_RightGhost, fJ, fEfield, fV], open(filenameTemp, "wb")
-    )  # TODO: Save the current and the electric field
+    )
 
 
 def SaveUnvariantData(fResults, fBarr, fx_mesh, fx_center, falpha_B):

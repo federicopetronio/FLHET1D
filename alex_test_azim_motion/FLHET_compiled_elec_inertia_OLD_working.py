@@ -217,7 +217,7 @@ def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center,
 
 
 @njit
-def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x):
+def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, empirical_term_interp = 0.0):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -287,6 +287,12 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
         ng * fKEL + falpha_B * wce + nu_ew
         )  # Electron momentum - transfer collision frequency
     
+    if np.any(empirical_term_interp) != 0.0:
+        RieY = empirical_term_interp
+    else:
+        RieY = -phy_const.m_e * nu_m * ni * Ue_y
+        
+
     #div_u   = gradient(ve, d=Delta_x)             # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
     div_p = gradient(phy_const.e*ni*Te, fx_center) # To be used with 5./2 and + div_p*ve in line 231    
 
@@ -309,12 +315,11 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
         # - phy_const.m_e * ni * nu_m * (ve**2)
         - phy_const.e * ni * E_x * ve
         # - phy_const.e * ni * fBarr * ve * Ue_y
-        + 1.5 * Siz_arr * phy_const.e * 10. # 1.5 can be safely, the simulation works
+        + 1.5 * Siz_arr * phy_const.e * 10. # 
         - 0.5 * Siz_arr * phy_const.m_e * Ue_y**2 # new term
     )
     fS[4, :] = (
-        - (phy_const.m_e * ni * nu_m * Ue_y)
-        + phy_const.e * ni * fBarr * ve
+        RieY + phy_const.e * ni * fBarr * ve
         )  # Momentum electrons
 
     #+ phy_const.e*ni*Te*div_u  #- gradI_term*ni*Te*grdI          # Energy in Joule
@@ -514,7 +519,7 @@ def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1
 
 # Compute the Current
 # @njit
-def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, fDelta_t, old_curr = True, n_old_U_ey_old = 0.0):
+def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, fDelta_t, old_curr = True, n_old_U_ey_old = 0.0, empirical_term_interp = 0.0):
 
     from scipy import integrate
     from scipy import interpolate
@@ -594,6 +599,11 @@ def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1,
 
         RieX = -phy_const.m_e * nu_m * ni * ve
         RieY = -phy_const.m_e * nu_m * ni * Ue_y
+
+        if np.any(empirical_term_interp) != 0:
+            # Interpolating the empirical term
+            RieY = empirical_term_interp
+            RieX = RieX*0
 
         Term_1 = Ue_y * fBarr + div_p / (ni) - RieX / (phy_const.e * ni) + vi * fBarr
         Term_1 += RieY / (phy_const.e * ni) - div_mnuxuy / (phy_const.e * ni) - dt_m_n_uey / (phy_const.e * ni)
@@ -870,6 +880,12 @@ def main(fconfigfile):
     U_Outlet = np.ones((5, 1))  # Ghost cell on the right
     P_Outlet = np.ones((6, 1))  # Ghost cell on the right
 
+    try:
+        empirical_term = np.loadtxt('empirical_term.txt')
+        empirical_term_interp = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 1])
+    except:
+        print("No empirical term file found.")
+
     if msp.TIMESCHEME == "TVDRK3":
         P_1 = np.ones(
             (6, NBPOINTS)
@@ -926,18 +942,27 @@ def main(fconfigfile):
     nu_m_init = alpha_B_init * wce_init
 
     ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
-    restart = False
+    restart = True
     if restart:
         P[1, :] = P_init[1, :]  # Initial ni
         P[2, :] = P_init[2, :]  # Initial vi
         P[3, :] = P_init[3, :]  # Initial Te
         P[4, :] = P_init[4, :] # Initial Ve
 
-    P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
-    # P[5, :] = P_init[5, :]    # Initial Ue_y
-    #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
-    ### Warning, in the code currently, neutrals dyanmic is canceled.
-    P[0,:] = P_init[0]
+        P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
+        # P[5, :] = P_init[5, :]    # Initial Ue_y
+        #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+        ### Warning, in the code currently, neutrals dyanmic is canceled.
+        P[0,:] = P_init[0]
+    else:
+        P[1, :] *= NI0  # Initial ni
+        P[2, :] *= 0.0  # Initial vi
+        P[3, :] *= TE0  # Initial Te
+        # P[3, :]  = SmoothInitialTemperature(P[3, :], Te_Cath)
+        P[4, :] *= P[2, :] - J / (A0 * phy_const.e * P[1, :])  # Initial Ve
+        #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
+        ### Warning, in the code currently, neutrals dyanmic is canceled.
+        P[0,:] = ng_anode
 
     n_old_U_ey_old = np.copy(P[1,:] * P[5,:])
 
@@ -973,10 +998,12 @@ def main(fconfigfile):
 
     if TIMESCHEME == "Forward Euler":
         J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
-        J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
+        J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp)
+        J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp)
         print(f"J_1 = {J:.3e} A")
         print(f"J_1_temp = {J_1_temp:.3e} A")
         print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
+        # np.savetxt("values.txt", np.stack([Barr, x_center, alpha_B], axis=0))
 
 
         while time < TIMEFINAL:
@@ -1001,6 +1028,7 @@ def main(fconfigfile):
                 #mean_j = (1/LX) * np.sum(j_of_x * Delta_x)
                 #print("J processed another way = {:.3e} A/m2".format(mean_j)) 
             # Set the boundaries
+            # np.savetxt("PPP.txt", P)
             SetInlet(P[:, 0], U_Inlet, P_Inlet, Mi, boolSizImposed, MDOT, A0, VG, Te_Cath, J, 1)
             SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
@@ -1022,7 +1050,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x)
+            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, empirical_term_interp)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
@@ -1045,6 +1073,8 @@ def main(fconfigfile):
             # Compute the current
             J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
             # J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp)
+
             
             # print(f"J_1 = {J:.3e} A")
             # print(f"J_1_temp = {J_1_temp:.3e} A")

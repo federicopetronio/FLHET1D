@@ -926,10 +926,12 @@ def main(fconfigfile):
     nu_m_init = alpha_B_init * wce_init
 
     ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
-    P[1, :] = P_init[1, :]  # Initial ni
-    P[2, :] = P_init[2, :]  # Initial vi
-    P[3, :] = P_init[3, :]  # Initial Te
-    P[4, :] = P_init[4, :] # Initial Ve
+    restart = False
+    if restart:
+        P[1, :] = P_init[1, :]  # Initial ni
+        P[2, :] = P_init[2, :]  # Initial vi
+        P[3, :] = P_init[3, :]  # Initial Te
+        P[4, :] = P_init[4, :] # Initial Ve
 
     P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
     # P[5, :] = P_init[5, :]    # Initial Ue_y
@@ -1042,7 +1044,8 @@ def main(fconfigfile):
 
             # Compute the current
             J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
+            # J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
+            
             # print(f"J_1 = {J:.3e} A")
             # print(f"J_1_temp = {J_1_temp:.3e} A")
             # print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")

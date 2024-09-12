@@ -89,7 +89,7 @@ class SimuParameters():
         try:
             self.Eion   = float(IonizationConfig["ionization energy"])
             self.gamma_i= float(IonizationConfig["coefficient gamma_i"])
-            self.Te_inj = float(IonizationConfig["injected e- temperature"])
+            self.Te_inj = float(IonizationConfig["injection e- temperature"])
         except KeyError:
             print("\tUserWarning: the config file " + fconfigfile + " does not specify all three of the parameters 'ionization energy', 'coefficient gamma_i' and 'injection e- temperature'. It may be a config file suited for an older version of the code. Default values for these values are used.")
             self.Eion   = 12.1

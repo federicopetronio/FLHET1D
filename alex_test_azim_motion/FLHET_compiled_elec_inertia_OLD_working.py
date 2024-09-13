@@ -217,7 +217,7 @@ def compute_mu(fP, fBarr, fESTAR, wall_inter_type:str, fR1, fR2, fMi, fx_center,
 
 
 @njit
-def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, empirical_term_interp = 0.0):
+def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,fx_center, fimposed_Siz, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fVG, fDelta_x, empirical_term_interp_y = 0.0, empirical_term_interp_x = 0.0):
 
     #############################################################
     #       We give a name to the vars to make it more readable
@@ -287,10 +287,12 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
         ng * fKEL + falpha_B * wce + nu_ew
         )  # Electron momentum - transfer collision frequency
     
-    if np.any(empirical_term_interp) != 0.0:
-        RieY = empirical_term_interp
+    if np.any(empirical_term_interp_y) != 0.0:
+        RieY = empirical_term_interp_y
+        RieX = empirical_term_interp_x
     else:
         RieY = -phy_const.m_e * nu_m * ni * Ue_y
+        RieX = -phy_const.m_e * ni * nu_m * ve
         
 
     #div_u   = gradient(ve, d=Delta_x)             # To be used with 3./2. in line 160 and + phy_const.e*ni*Te*div_u  in line 231
@@ -305,6 +307,7 @@ def Source(fP, fS, fBarr, fisSourceImposed, fenableIonColl, wall_inter_type:str,
         d_IC * Siz_arr * fVG * fMi
         # - (phy_const.e / (mu_eff[:] * fMi)) * ni * ve
         # - (phy_const.m_e * ni * nu_m * ve) # this can be safely commented, the simulation works
+        + RieX
         - phy_const.e * ni * fBarr * Ue_y
         - nu_iw * ni * vi * fMi
         )  # Momentum
@@ -519,7 +522,7 @@ def heatFluxImplicit(fP, fBarr, wall_inter_type:str, fx_center, fESTAR, fMi, fR1
 
 # Compute the Current
 # @njit
-def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, fDelta_t, old_curr = True, n_old_U_ey_old = 0.0, empirical_term_interp = 0.0):
+def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1, fR2, fLTHR, fKEL, falpha_B, fDelta_x, fA0, fRext, fDelta_t, old_curr = True, n_old_U_ey_old = 0.0, empirical_term_interp_y = 0.0, empirical_term_interp_x = 0.0):
 
     from scipy import integrate
     from scipy import interpolate
@@ -597,13 +600,14 @@ def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1,
         # print("div_mnuxuy", div_mnuxuy[-4:])
         # print("dt_m_n_uey", dt_m_n_uey[-4:])
 
-        RieX = -phy_const.m_e * nu_m * ni * ve
-        RieY = -phy_const.m_e * nu_m * ni * Ue_y
+        if np.any(empirical_term_interp_y) != 0:
+            # use the interpolated empirical term
+            RieY = empirical_term_interp_y
+            RieX = empirical_term_interp_x
+        else:
+            RieX = -phy_const.m_e * nu_m * ni * ve
+            RieY = -phy_const.m_e * nu_m * ni * Ue_y
 
-        if np.any(empirical_term_interp) != 0:
-            # Interpolating the empirical term
-            RieY = empirical_term_interp
-            RieX = RieX*0
 
         Term_1 = Ue_y * fBarr + div_p / (ni) - RieX / (phy_const.e * ni) + vi * fBarr
         Term_1 += RieY / (phy_const.e * ni) - div_mnuxuy / (phy_const.e * ni) - dt_m_n_uey / (phy_const.e * ni)
@@ -882,7 +886,11 @@ def main(fconfigfile):
 
     try:
         empirical_term = np.loadtxt('empirical_term.txt')
-        empirical_term_interp = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 1])
+        # empirical_term = np.loadtxt('empirical_term_1.txt')
+        empirical_term_interp_y = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 1])
+        print("Empirical term y loaded.")
+        empirical_term_interp_x = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 2])
+        print("Empirical term x loaded.")
     except:
         print("No empirical term file found.")
 
@@ -998,11 +1006,11 @@ def main(fconfigfile):
     ##########################################################################################
 
     if TIMESCHEME == "Forward Euler":
-        J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
-        J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp)
-        J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp)
+        # J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
+        J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp_y)
+        # J_1_temp = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp_y)
         print(f"J_1 = {J:.3e} A")
-        print(f"J_1_temp = {J_1_temp:.3e} A")
+        # print(f"J_1_temp = {J_1_temp:.3e} A")
         print(f"I_calc = {P[1,10]* phy_const.e * A0 * (P[2,10] - P[4,10]):.3e} A")
         # np.savetxt("values.txt", np.stack([Barr, x_center, alpha_B], axis=0))
 
@@ -1051,7 +1059,7 @@ def main(fconfigfile):
             )
 
             # Compute the source in the center of the cell
-            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, empirical_term_interp)
+            Source(P, S, Barr, boolSizImposed, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, empirical_term_interp_y, empirical_term_interp_x)
             if HEATFLUX and not IMPlICIT:
                 dt_HF = heatFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x)
                 Delta_t = min(dt_HF, Delta_t)
@@ -1072,9 +1080,9 @@ def main(fconfigfile):
             )
 
             # Compute the current
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
+            # J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t)
             # J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old)
-            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp)
+            J = compute_I(P, V, time, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext, Delta_t, False, n_old_U_ey_old, empirical_term_interp_y)
 
             
             # print(f"J_1 = {J:.3e} A")

@@ -930,7 +930,8 @@ def main(fconfigfile):
     # # TEST
     # We initialize the primitive variables
     
-    with open('/home/petronio/Nextcloud_sync/code/FLHET1D/alex_test_azim_motion/Data/MacroscopicVars_000038.pkl', 'rb') as f:
+    # with open('/home/petronio/Nextcloud_sync/code/FLHET1D/alex_test_azim_motion/Data/MacroscopicVars_000038.pkl', 'rb') as f:
+    with open('/home/petronio/Nextcloud_sync/code/FLHET1D/alex_test_azim_motion/Results/testInertia_Initialization_NoConstantCurrent_NewSource_restart_interp/Data/MacroscopicVars_000030.pkl', 'rb') as f:
             [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
     # with open('./Results/testInertia_Initialization_ConstantCurrent_2/Data/MacroscopicVars_000009.pkl', 'rb') as f:
     #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
@@ -949,8 +950,8 @@ def main(fconfigfile):
         P[3, :] = P_init[3, :]  # Initial Te
         P[4, :] = P_init[4, :] # Initial Ve
 
-        P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
-        # P[5, :] = P_init[5, :]    # Initial Ue_y
+        # P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
+        P[5, :] = P_init[5, :]    # Initial Ue_y
         #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
         ### Warning, in the code currently, neutrals dyanmic is canceled.
         P[0,:] = P_init[0]

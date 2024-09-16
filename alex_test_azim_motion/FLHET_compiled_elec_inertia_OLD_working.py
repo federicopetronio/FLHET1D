@@ -106,16 +106,18 @@ def ConsToPrim(fU, fP, fMi, fA0, fJ=0.0):
     fP[5, :] = fU[4, :] / (phy_const.m_e * fU[1, :] / fMi )     # Ue_y
 
 
-@njit
-def InviscidFlux(fP, fF, fVG, fMi):
+# @njit
+def InviscidFlux(fP, fF, fVG, fMi, tau_xy = 0.):
     fF[0, :] = fP[0, :] * fVG * fMi # rho_g*v_g
     fF[1, :] = fP[1, :] * fP[2, :] * fMi # rho_i*v_i
     fF[2, :] = (
         fMi* fP[1, :] * fP[2, :] * fP[2, :] + fP[1, :] * phy_const.e * fP[3, :]
     )  # M*n_i*v_i**2 + p_e
-    fF[3, :] = (5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :] + 0.5 * phy_const.m_e * fP[1, :] * fP[5, :]**2) * fP[4, :]  # (1/2*rhoe*uey^2*v_e + 5/2n_i*e*T_e*v_e)
+    fF[3, :] = (5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :] + 0.5 * phy_const.m_e * fP[1, :] * fP[5, :]**2) * fP[4, :] + tau_xy * fP[5, :] # (1/2*rhoe*uey^2*v_e + 5/2n_i*e*T_e*v_e)
     fF[4, :] = phy_const.m_e * fP[1, :] * fP[5, :] * fP[4, :]            # (rhoe*uey*uex)
-
+    # print((5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :])* fP[4, :])
+    # print(tau_xy* fP[5, :])
+    # sys.exit()
 
 def CompareIonizationTypes(fx_center, fP, fSIZMAX, fLSIZ1, fLSIZ2):
     ng = fP[0, :]
@@ -635,6 +637,13 @@ def compute_I(fP, fV, t, fBarr, wall_inter_type:str,fx_center, fESTAR, fMi, fR1,
         # print("2 bottom", bottom)
 
         I0 = top / bottom  # Discharge current density
+        # print(I0)
+        if np.any(np.abs(I0) > 1e24):
+            # print(np.shape(fBarr), np.shape(ni), np.shape(div_uey))
+            np.savetxt("bottom_values.txt", np.stack([fBarr.T, ni.T, div_uey.T], axis=0))
+            print(I0, top, bottom)
+            if np.any(np.abs(I0) > 1e25):
+                sys.exit()
         I0 = (I0 * phy_const.e * fA0)
 
     return I0
@@ -808,6 +817,29 @@ def SmoothInitialTemperature(bulk_array:np.ndarray, Toutlet:float)->np.ndarray:
     
     return bulk_copy
 
+def linear_extrapolation_multi(vec, num_points=3):
+    # Use at least two points for linear extrapolation
+    if len(vec) < 2:
+        raise ValueError("Vector must have at least two elements for extrapolation.")
+    
+    # Ensure num_points is not greater than the vector length
+    num_points = min(num_points, len(vec) - 1)
+    
+    # Fit a line (degree 1 polynomial) to the first few points
+    start_fit = np.polyfit(range(num_points), vec[:num_points], 1)
+    # Predict the value before the first point using the line
+    start_extrapolated_value = np.polyval(start_fit, -1)  # x = -1 for extrapolation one step back
+
+    # Fit a line to the last few points
+    end_fit = np.polyfit(range(len(vec) - num_points, len(vec)), vec[-num_points:], 1)
+    # Predict the value after the last point using the line
+    end_extrapolated_value = np.polyval(end_fit, len(vec))  # x = len(vec) for extrapolation one step forward
+    
+    # Add the extrapolated values to the vector
+    extended_vec = np.insert(vec, 0, start_extrapolated_value)  # Insert at the beginning
+    extended_vec = np.append(extended_vec, end_extrapolated_value)  # Append at the end
+    
+    return extended_vec
 
 def main(fconfigfile):
 
@@ -885,12 +917,14 @@ def main(fconfigfile):
     P_Outlet = np.ones((6, 1))  # Ghost cell on the right
 
     try:
-        empirical_term = np.loadtxt('empirical_term.txt')
+        empirical_term = np.loadtxt('empirical_term_add_1.txt')
         # empirical_term = np.loadtxt('empirical_term_1.txt')
         empirical_term_interp_y = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 1])
         print("Empirical term y loaded.")
         empirical_term_interp_x = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 2])
         print("Empirical term x loaded.")
+        tau_xy_temp = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 3])
+        tau_xy = -linear_extrapolation_multi(tau_xy_temp, 2)
     except:
         print("No empirical term file found.")
 
@@ -939,9 +973,19 @@ def main(fconfigfile):
     # We initialize the primitive variables
     
     # with open('/home/petronio/Nextcloud_sync/code/FLHET1D/alex_test_azim_motion/Data/MacroscopicVars_000038.pkl', 'rb') as f:
-    with open('/home/petronio/Nextcloud_sync/code/FLHET1D/alex_test_azim_motion/Results/testInertia_Initialization_NoConstantCurrent_NewSource_restart_interp/Data/MacroscopicVars_000030.pkl', 'rb') as f:
+    # with open('/home/petronio/Nextcloud_sync/code/FLHET1D/alex_test_azim_motion/Results/testInertia_Initialization_NoConstantCurrent_NewSource_restart_interp/Data/MacroscopicVars_000030.pkl', 'rb') as f:
+    #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
+    with open('./Results/half_gradPxy_emp_term_2/Data/MacroscopicVars_000130.pkl', 'rb') as f:
             [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
-    # with open('./Results/testInertia_Initialization_ConstantCurrent_2/Data/MacroscopicVars_000009.pkl', 'rb') as f:
+    # with open('./Results/half_gradPxy_emp_term_3/Data/MacroscopicVars_000036.pkl', 'rb') as f:
+    #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
+    # with open('./Results/half_gradPxy_emp_term_3/Data/MacroscopicVars_000036.pkl', 'rb') as f:
+    #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
+    # with open('./Results/half_gradPxy_emp_term_4/Data/MacroscopicVars_000025.pkl', 'rb') as f:
+    #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
+    # with open('./Results/half_gradPxy_emp_term_6/Data/MacroscopicVars_000028.pkl', 'rb') as f:
+    #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
+    # with open('./Results/half_gradPxy_emp_term_30/Data/MacroscopicVars_000003.pkl', 'rb') as f:
     #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
 
     alpha_B_init = compute_alphaB_array(x_center, 1.6238e-2 , 2.4560e-2, LTHR, msp.NBPOINTS_INIT)
@@ -959,7 +1003,10 @@ def main(fconfigfile):
         P[4, :] = P_init[4, :] # Initial Ve
 
         # P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
-        P[5, :] = P_init[5, :]    # Initial Ue_y
+        try:
+            P[5, :] = P_init[5, :]    # Initial Ue_y
+        except:
+            P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
         #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
         ### Warning, in the code currently, neutrals dyanmic is canceled.
         P[0,:] = P_init[0]
@@ -1042,7 +1089,7 @@ def main(fconfigfile):
             SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
-            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi)
+            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi, tau_xy)
 
             # Compute the convective Delta t
             Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)

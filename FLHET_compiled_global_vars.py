@@ -82,7 +82,14 @@ IMPlICIT    = msp.IMPlICIT
 boolCircuit = msp.Circuit
 V           = msp.V0
 
-MakeTheResultsDir(Resultsdir)
+if not os.path.exists(Resultsdir):
+    os.makedirs(Resultsdir)
+ResultsFigs = Resultsdir + "/Figs"
+if not os.path.exists(ResultsFigs):
+    os.makedirs(ResultsFigs)
+ResultsData = Resultsdir + "/Data"
+if not os.path.exists(ResultsData):
+    os.makedirs(ResultsData)
 
 msp.save_config_file("Configuration.cfg")
 
@@ -107,6 +114,7 @@ def compute_B_array():
 
     BMAX = msp.BMAX
     B0     = msp.B0
+    BLX     = msp.BLX
     LTHR   = msp.LTHR
     LB1    = msp.LB1
     LB2     = msp.LB2
@@ -114,21 +122,22 @@ def compute_B_array():
     if msp.BTYPE == 'CharoyBenchmark':
 
         a1 = (BMAX - B0)/(1 - math.exp(-LTHR**2/(2*LB1**2)))
-        a2 = (BMAX - fBLX)/(1 - math.exp(-(fLX - LTHR)**2/(2*LB2**2)))
+        a2 = (BMAX - BLX)/(1 - math.exp(-(LX - LTHR)**2/(2*LB2**2)))
         b1 = BMAX - a1
         b2 = BMAX - a2
-        Barr1 = a1*np.exp(-(fx_center - LTHR)**2/(2*LB1**2)) + b1
-        Barr2 = a2*np.exp(-(fx_center - LTHR)**2/(2*LB2**2)) + b2    # Magnetic field outside the thruster
+        Barr1 = a1*np.exp(-(x_center - LTHR)**2/(2*LB1**2)) + b1
+        Barr2 = a2*np.exp(-(x_center - LTHR)**2/(2*LB2**2)) + b2    # Magnetic field outside the thruster
 
-        Barr = np.where(fx_center <= LTHR, Barr1, Barr2)
+        Barr = np.where(x_center <= LTHR, Barr1, Barr2)
     
     else:
-        Barr    = BMAX * np.exp(-(((fx_center - LTHR) / LB1) ** 2.0))  # Magnetic field within the thruster
-        Barr    = np.where(fx_center < LTHR, Barr, BMAX * np.exp(-(((fx_center - LTHR) / LB2) ** 2.0)))  # Magnetic field outside the thruster
+        Barr    = BMAX * np.exp(-(((x_center - LTHR) / LB1) ** 2.0))  # Magnetic field within the thruster
+        Barr    = np.where(x_center < LTHR, Barr, BMAX * np.exp(-(((x_center - LTHR) / LB2) ** 2.0)))  # Magnetic field outside the thruster
 
     return Barr
 
 Barr = compute_B_array()
+Barr_extended = np.concatenate([[Barr[0]], Barr, [Barr[-1]]])
 
 alpha_B1, alpha_B2  = msp.extract_anom_coeffs()
 
@@ -145,12 +154,12 @@ def compute_alphaB_array():
     
     return alpha_B_smooth    
 
-alpha_B = compute_alphaB_array(x_center, alpha_B1, alpha_B2, LTHR, msp.NBPOINTS_INIT)
+alpha_B = compute_alphaB_array()
+alpha_B_extended = np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]])
 
 ##### Save Unvariant data #####
-ResultsData = fResults + "/Data"
 pickle.dump(
-    [fBarr, fx_mesh, fx_center, falpha_B], open(ResultsData + "/MacroscopicUnvariants.pkl", "wb")
+    [Barr, x_mesh, x_center, alpha_B], open(ResultsData + "/MacroscopicUnvariants.pkl", "wb")
 )
 
 ##### Allocation of vectors #####
@@ -165,9 +174,9 @@ P_LeftGhost = np.ones((5, 1))  # Ghost cell on the left
 U_RightGhost = np.ones((4, 1))  # Ghost cell on the right
 P_RightGhost = np.ones((5, 1))  # Ghost cell on the right
 
-if START_FROM_INPUT:
+if msp.START_FROM_INPUT:
 
-    list_of_pkls = glob.glob(INPUT_DIR+"/MacroscopicVars*.pkl")
+    list_of_pkls = glob.glob(msp.INPUT_DIR+"/MacroscopicVars*.pkl")
     assert(len(list_of_pkls) == 1)
     INPUT_FILE  = list_of_pkls[0]
     print("Simulation starts from the profiles stored in ", INPUT_FILE)
@@ -274,8 +283,8 @@ time = 0.0
 iter = 0
 
 ##### Compute Si_{iz} #####
-xm = (fLSIZ1 + fLSIZ2)/2
-imposed_Siz = msp.SIZMAX*np.cos(math.pi*(x_center - xm)/(fLSIZ2 - msp.LSIZ1))
+xm = (msp.LSIZ1 + msp.LSIZ2)/2
+imposed_Siz = msp.SIZMAX*np.cos(math.pi*(x_center - xm)/(msp.LSIZ2 - msp.LSIZ1))
 imposed_Siz = np.where((x_center < msp.LSIZ1)|(x_center > msp.LSIZ2), 0., imposed_Siz)
 del xm
 
@@ -288,14 +297,14 @@ def compute_mu(fP):
     ng = fP[0, :]
     Te = fP[3, :]
 
-    wce = phy_const.e*fBarr/phy_const.m_e
+    wce = phy_const.e*Barr/phy_const.m_e
 
     sigma = 2.0 * Te / ESTAR  # SEE yield
     sigma[sigma > 0.986] = 0.986
 
     if wall_inter_type == "Default":
         # nu_iw value before Martin changed the code for Charoy's test cases.    
-        nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/fMi)
+        nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/Mi)
         # Limit the wall interactions to the inner channel
         nu_iw[x_center > LTHR] = 0.0
         nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate            
@@ -310,20 +319,20 @@ def compute_mu(fP):
 
 
 @njit
-def PrimToCons(fP, fU, fMi):
-    fU[0, :] = fP[0, :] * fMi # rhog
-    fU[1, :] = fP[1, :] * fMi # rhoi
-    fU[2, :] = fP[2, :] * fP[1, :] * fMi # rhoiUi
+def PrimToCons(fP, fU):
+    fU[0, :] = fP[0, :] * Mi # rhog
+    fU[1, :] = fP[1, :] * Mi # rhoi
+    fU[2, :] = fP[2, :] * fP[1, :] * Mi # rhoiUi
     fU[3, :] = 3.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :]  # 3/2*ni*e*Te
 
 
 @njit
-def ConsToPrim(fU, fP, fMi, fA0, fJ=0.0):
-    fP[0, :] = fU[0, :] / fMi # ng
-    fP[1, :] = fU[1, :] / fMi # ni
+def ConsToPrim(fU, fP, fJ=0.0):
+    fP[0, :] = fU[0, :] / Mi # ng
+    fP[1, :] = fU[1, :] / Mi # ni
     fP[2, :] = fU[2, :] / fU[1, :]  # Ui = rhoUi/rhoi
     fP[3, :] = 2.0 / 3.0 * fU[3, :] / (phy_const.e * fP[1, :])  # Te
-    fP[4, :] = fP[2, :] - fJ / (fA0 * phy_const.e * fP[1, :])  # ve
+    fP[4, :] = fP[2, :] - fJ / (A0 * phy_const.e * fP[1, :])  # ve
 
 
 @njit
@@ -345,23 +354,6 @@ def CumTrapz(y, d):
         cuminteg[i] = cuminteg[i-1] + d * (y[i] + y[i-1]) / 2.0
 
     return cuminteg
-
-
-@njit
-def InitNeutralDensity(fx_center, fng_cathode, fVG, fP, fisSourceImposed, fSIZMAX, fLSIZ1, fLSIZ2):
-    Eion = 12.1
-    ni = fP[1,:]
-    Te = fP[3,:]
-    if fisSourceImposed:
-        Siz_arr = compute_imposed_Siz(fx_center, fSIZMAX, fLSIZ1, fLSIZ2)
-        dx_temp = (fx_center[-1] - fx_center[0])/(fx_center.shape[0] - 1)
-        ng_init = fng_cathode - (1/fVG)*CumTrapz(Siz_arr, dx_temp)
-
-    else:
-        Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))
-        ng_init = fng_cathode*np.exp( - (1/fVG) * ni * Kiz * fx_center)
-
-    return ng_init
 
 
 @njit
@@ -397,7 +389,7 @@ def compute_E(fP):
     sigma[sigma > 0.986] = 0.986
     if wall_inter_type == "Default":
         # nu_iw value before Martin changed the code for Charoy's test cases.    
-        nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/M)
+        nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/Mi)
         # Limit the wall interactions to the inner channel
         nu_iw[x_center > LTHR] = 0.0
         nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
@@ -447,7 +439,7 @@ def Source(fP, fS):
 
     # Gamma_E = 3./2.*ni*phy_const.e*Te*ve    # Flux of internal energy
     me = phy_const.m_e
-    wce = phy_const.e * fBarr / me # electron cyclotron frequency
+    wce = phy_const.e * Barr / me # electron cyclotron frequency
 
     #############################
     #       Compute the rates   #
@@ -455,14 +447,14 @@ def Source(fP, fS):
 
     Siz_arr = np.zeros(ng.shape, dtype=float) # the final unit of Siz_arr is m^(-3).s^(-1)
     # Computing ionization source term:
-    if not fisSourceImposed:
+    if not boolSizImposed:
         Kiz = 1.8e-13* (((1.5*Te)/Eion)**0.25) * np.exp(- 4*Eion/(3*Te))   # Ion - neutral  collision rate          MARTIN: Change
         Siz_arr = ng*ni*Kiz
     else:
         Siz_arr = imposed_Siz
 
     # If ionization collision are considered in the momentum and energy equations.
-    if enableIonColl:
+    if boolIonColl:
         d_IC = 1.0
     else:
         d_IC = 0.
@@ -473,7 +465,7 @@ def Source(fP, fS):
         # nu_iw value before Martin changed the code for Charoy's test cases.    
         nu_iw = (4./3.)*(1./(R2 - R1))*np.sqrt(phy_const.e*Te/Mi)
         # Limit the wall interactions to the inner channel
-        nu_iw[fx_center > LTHR] = 0.0
+        nu_iw[x_center > LTHR] = 0.0
         nu_ew = nu_iw / (1.0 - sigma)  # Electron - wall collision rate        
     
     elif wall_inter_type == "None":
@@ -543,7 +535,7 @@ def heatFlux(fP, fS):
     # falpha_B_extended = np.concatenate([[falpha_B[0]], falpha_B, [falpha_B[-1]]])
 
     me = phy_const.m_e
-    wce = phy_const.e * fBarr / me # electron cyclotron frequency
+    wce = phy_const.e * Barr / me # electron cyclotron frequency
 
     #############################
     #       Compute the rates   #
@@ -592,7 +584,7 @@ def heatFlux(fP, fS):
     q_12     =  - 0.5*kappa_12*grad_Te  # 1/2 test just to match P.A. data
     q_source = (q_12[1:] - q_12[:-1])/Delta_x
 
-    #fS[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * fMi # Gas Density
+    #fS[0, :] = (-Siz_arr + nu_iw[:] * ni[:]) * Mi # Gas Density
 
     fS[3,:] += (
         -q_source
@@ -636,7 +628,7 @@ def heatFluxImplicit(fP, fDelta_t):
     Te = fP[3, :] # It contains ghost cells
 
     me = phy_const.m_e
-    wce = phy_const.e * fBarr / me # electron cyclotron frequency
+    wce = phy_const.e * Barr_extended / me # electron cyclotron frequency
 
     #############################
     #       Compute the rates   #
@@ -704,8 +696,6 @@ def heatFluxImplicit(fP, fDelta_t):
     # d_solutionVector      = np.copy(Te[1:-1]) - a_lowerDiag*Te[:-2] - c_upperDiag*Te[2:] + b_mainDiag*Te[1:-1]
     # d_solutionVector[0]  += a_lowerDiag[0]*Te[0]     # Adding the boundary conditions
     # d_solutionVector[-1] += c_upperDiag[-1]*Te[-1] 
-
-
 
     return TDMA(a_lowerDiag[1:], b_mainDiag, c_upperDiag[:-1], d_solutionVector)
 
@@ -779,7 +769,7 @@ def SetInlet(fP_LeftColumn, fU_ghost, fP_ghost, fJ=0.0, moment=1):
 
     U_Bohm = np.sqrt(phy_const.e * fP_LC[3] / Mi)
 
-    if not fisSourceImposed:
+    if not boolSizImposed:
         if fP_LC[1] * fP_LC[2] < 0.0:
             fU_ghost[0] = (MDOT - Mi* fP_LC[1] * fP_LC[2] * A0) / (A0 * VG)
         else:
@@ -826,6 +816,78 @@ def SetOutlet(fP_RightColumn, fU_ghost, fP_ghost, J=0.0):
     fP_ghost[4] = fP_ghost[2] - J / (A0 * phy_const.e * fP_ghost[1])  # ve
 
 
+##########################################################
+#           Functions defining our numerics              #
+##########################################################
+
+# TODO: These are vector. Better allocate them
+@njit
+def computeMaxEigenVal_e(fP):
+
+    U_Bohm = np.sqrt(phy_const.e * fP[3, :] / Mi)
+
+    return np.maximum(np.abs(U_Bohm - fP[4, :]) * 2, np.abs(U_Bohm + fP[4, :]) * 2)
+
+
+@njit
+def computeMaxEigenVal_i(fP):
+
+    U_Bohm = np.sqrt(phy_const.e * fP[3, :] / Mi)
+
+    # return [max(l1, l2) for l1, l2 in zip(abs(U_Bohm - P[2,:]), abs(U_Bohm + P[2,:]))]
+    return np.maximum(np.abs(U_Bohm - fP[2, :]), np.abs(U_Bohm + fP[2, :]))
+
+
+@njit
+def NumericalFlux(fP, fU, fF_cell, fF_interf):
+
+    # Compute the max eigenvalue
+    lambda_max_i_R = computeMaxEigenVal_i(fP[:, 1 : NBPOINTS + 2])
+    lambda_max_i_L = computeMaxEigenVal_i(fP[:, 0 : NBPOINTS + 1])
+    lambda_max_i_12 = np.maximum(lambda_max_i_L, lambda_max_i_R)
+
+    lambda_max_e_R = computeMaxEigenVal_e(fP[:, 1 : NBPOINTS + 2])
+    lambda_max_e_L = computeMaxEigenVal_e(fP[:, 0 : NBPOINTS + 1])
+    lambda_max_e_12 = np.maximum(lambda_max_e_L, lambda_max_e_R)
+
+    # Compute the flux at the interface
+    fF_interf[0, :] = 0.5 * (
+        fF_cell[0, 0 : NBPOINTS + 1] + fF_cell[0, 1 : NBPOINTS + 2]
+    ) - 0.5 * VG * (fU[0, 1 : NBPOINTS + 2] - fU[0, 0 : NBPOINTS + 1])
+
+    fF_interf[1, :] = 0.5 * (
+        fF_cell[1, 0 : NBPOINTS + 1] + fF_cell[1, 1 : NBPOINTS + 2]
+    ) - 0.5 * lambda_max_i_12 * (fU[1, 1 : NBPOINTS + 2] - fU[1, 0 : NBPOINTS + 1])
+    
+    fF_interf[2, :] = 0.5 * (
+        fF_cell[2, 0 : NBPOINTS + 1] + fF_cell[2, 1 : NBPOINTS + 2]
+    ) - 0.5 * lambda_max_i_12 * (fU[2, 1 : NBPOINTS + 2] - fU[2, 0 : NBPOINTS + 1])
+    
+    fF_interf[3, :] = 0.5 * (
+        fF_cell[3, 0 : NBPOINTS + 1] + fF_cell[3, 1 : NBPOINTS + 2]
+    ) - 0.5 * lambda_max_e_12 * (fU[3, 1 : NBPOINTS + 2] - fU[3, 0 : NBPOINTS + 1])
+
+
+#@njit
+def ComputeDelta_t(fP):
+
+    x_ext  = x_center_extended # renaming for elegance
+
+    # Compute the max eigenvalue
+    lambda_max_i_R = computeMaxEigenVal_i(fP[:, 1 : NBPOINTS + 2])
+    lambda_max_i_L = computeMaxEigenVal_i(fP[:, 0 : NBPOINTS + 1])
+    lambda_max_i_12 = np.maximum(lambda_max_i_L, lambda_max_i_R)
+
+    lambda_max_e_R = computeMaxEigenVal_e(fP[:, 1 : NBPOINTS + 2])
+    lambda_max_e_L = computeMaxEigenVal_e(fP[:, 0 : NBPOINTS + 1])
+    lambda_max_e_12 = np.maximum(lambda_max_e_L, lambda_max_e_R)
+
+    # Delta_t = CFL * fDelta_x / (max(max(lambda_max_e_12), max(lambda_max_i_12)))
+    Delta_t = CFL * min((x_ext[1:] - x_ext[:-1]) / np.maximum(lambda_max_e_12,  lambda_max_i_12))
+
+    return Delta_t
+
+
 mu_eff_arr = compute_mu(P)
 print(f"Checking mu value [m^2 s^-1 V^-1]. Bmax = {msp.BMAX*10000:.0f}\talpha_B1 = {alpha_B1:.4e}\talpha_B2 = {alpha_B2:.4e}")
 #print(mu_eff_arr)
@@ -833,7 +895,7 @@ print(f"\tMean value over domain space  {np.mean(mu_eff_arr):.6e}")
 print(f"\tStd deviation:                {np.std(mu_eff_arr):.6e}")
 
 # We initialize the conservative variables
-PrimToCons(P, U, Mi)
+PrimToCons(P, U)
 
 if TIMESCHEME == "Forward Euler":
     ##########################################################################################
@@ -862,34 +924,31 @@ if TIMESCHEME == "Forward Euler":
             )
         # where I stopped changing the code.
         # Set the boundaries
-        SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, MDOT, A0, VG, J, 1)
-        SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, Mi, A0, Te_Cath, J)
+        SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, J, 1)
+        SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, J)
 
         # Compute the Fluxes in the center of the cell
-        InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell, VG, Mi)
+        InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell)
 
         # Compute the convective Delta t
-        Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), NBPOINTS, Mi, CFL, x_center_extended)
+        Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1))
         #print(Delta_t)
         # Compute the Numerical at the interfaces
         NumericalFlux(
             np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
             np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
             F_cell,
-            F_interf,
-            NBPOINTS,
-            Mi,
-            VG,
+            F_interf
         )
 
         # Compute the source in the center of the cell
-        Source(P, S, Barr, boolSizImposed, Eion, boolIonColl, wall_inter_type, x_center, imposed_Siz, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, VG, Delta_x, boolPressureDiv, gamma_i, Te_inj)
+        Source(P, S)
         if HEATFLUX and not IMPlICIT:
-            dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S,  np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x, CFL)
+            dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S)
             Delta_t = min(dt_HF, Delta_t)
         elif HEATFLUX and IMPlICIT:
             dt_HF = Delta_t
-            Te = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), np.concatenate([[Barr[0]], Barr, [Barr[-1]]]), wall_inter_type, x_center_extended, ESTAR, Mi, R1, R2, LTHR, KEL, np.concatenate([[alpha_B[0]], alpha_B, [alpha_B[-1]]]), Delta_x_extended, Delta_t)
+            Te = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1))
             print(Te)
         
 
@@ -906,10 +965,234 @@ if TIMESCHEME == "Forward Euler":
         U[3,:] = np.where(U[3,:] >= 0., U[3,:], 0.)
 
         # Compute the current
-        J = compute_I(P, V, Barr, wall_inter_type, x_center, ESTAR, Mi, R1, R2, LTHR, KEL, alpha_B, Delta_x, A0, Rext)
+        J = compute_I(P, V)
 
         # Compute the primitive vars for next step
-        ConsToPrim(U, P, Mi, A0, J)
+        ConsToPrim(U, P, J)
 
         time += Delta_t
         iter += 1
+
+if TIMESCHEME == "TVDRK3":
+
+    while time < TIMEFINAL:
+        
+        # Save results
+        if (iter % SAVERATE) == 0:
+            # Compute the electric field.
+            Efield = compute_E(P)
+            filenameTemp = ResultsData + "/MacroscopicVars_" + f"{i_save:06d}" + ".pkl"
+            pickle.dump(
+                [time, P, U, P_LeftGhost, P_RightGhost, J, Efield, V], open(filenameTemp, "wb")
+            )
+            i_save += 1
+            print(
+                "Iter = ",
+                iter,
+                "\tTime = {:.2f}~µs".format(time / 1e-6),
+                "\tI = {:.4f}~A".format(J),
+                "\tJ = {:.3e} A/m2".format(J/A0),
+            )
+
+        #################################################
+        #           FIRST STEP RK3
+        #################################################
+
+        # Copy the solution to store it
+        U_1[:, :] = U[:, :]
+        ConsToPrim(U_1, P_1, J)
+        J_1 = compute_I(P, V)
+        ConsToPrim(U_1, P_1, J_1)
+
+        # Set the boundaries
+        SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, J)
+        SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, J)
+        # Compute the Fluxes in the center of the cell
+        InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell)
+        # Compute the convective Delta t (Only in the first step)
+        Delta_t = ComputeDelta_t(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1))
+
+        # Compute the Numerical at the interfaces
+        NumericalFlux(
+            np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+            np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
+            F_cell,
+            F_interf,
+        )
+
+        # Compute the source in the center of the cell
+        Source(P, S)
+
+        if HEATFLUX and not IMPlICIT:
+            dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S)
+            Delta_t = min(dt_HF, Delta_t)
+        # First half step of strang-splitting
+        elif HEATFLUX and IMPlICIT:
+            dt_HF = Delta_t
+            P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1))
+            U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+        # Update the solution
+        U[:, :] = (
+            U[:, :]
+            - Delta_t
+            / Delta_x
+            * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+            + Delta_t * S[:, :]
+        )
+
+        # Compute the current
+        J = compute_I(P, V)
+
+        # Compute the primitive vars for next step
+        ConsToPrim(U, P, J)
+
+        # Compute RLC boolCircuit
+        if boolCircuit:
+            dJdt = (J - Jm1) / Delta_t
+
+            RHS_Volt0[0] = X_Volt0[1]
+            RHS_Volt0[1] = (
+                -1 / (R * C) * X_Volt0[1] - 1.0 / (L * C) * X_Volt0[0] + 1 / C * dJdt
+            )
+            X_Volt1 = X_Volt0 + Delta_t * RHS_Volt0
+
+        #################################################
+        #           SECOND STEP RK3
+        #################################################
+        # Set the boundaries
+        SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, J, 2)
+        SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, J)
+
+        # Compute the Fluxes in the center of the cell
+        InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell)
+
+        # Compute the Numerical at the interfaces
+        NumericalFlux(
+            np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+            np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
+            F_cell,
+            F_interf,
+        )
+
+        # Compute the source in the center of the cell
+        Source(P, S,)
+        if HEATFLUX and not IMPlICIT:
+            dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S)
+            
+
+        # Update the solution
+        U[:, :] = (
+            0.75 * U_1[:, :]
+            + 0.25 * U[:, :]
+            + 0.25
+            * (
+                -Delta_t
+                / Delta_x
+                * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+                + Delta_t * S[:, :]
+            )
+        )
+
+        # Compute the current
+        J = compute_I(P, V)
+
+        # Compute the primitive vars for next step
+        ConsToPrim(U, P, J)
+
+        # Compute RLC Circuit
+        if boolCircuit:
+            dJdt = (J - Jm1) / Delta_t
+            RHS_Volt1[0] = X_Volt1[1]
+            RHS_Volt1[1] = (
+                -1 / (R * C) * X_Volt1[1] - 1.0 / (L * C) * X_Volt1[0] + 1 / C * dJdt
+            )
+            X_Volt2 = 0.75 * X_Volt0 + 0.25 * X_Volt1 + 0.25 * Delta_t * RHS_Volt1
+
+        #################################################
+        #           THIRD STEP RK3
+        #################################################
+        # Set the boundaries
+        SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, J, 3)
+        SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, J)
+
+        # Compute the Fluxes in the center of the cell
+        InviscidFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), F_cell)
+
+        # Compute the Numerical at the interfaces
+        NumericalFlux(
+            np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1),
+            np.concatenate([U_LeftGhost, U, U_RightGhost], axis=1),
+            F_cell,
+            F_interf,
+        )
+        # Compute the source in the center of the cell
+        Source(P, S)
+        if HEATFLUX and not IMPlICIT:
+            dt_HF = heatFlux(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1), S)
+
+        # Update the solution
+        U[:, :] = (
+            1.0 / 3.0 * U_1[:, :]
+            + 2.0 / 3.0 * U[:, :]
+            + 2.0
+            / 3.0
+            * (
+                -Delta_t
+                / Delta_x
+                * (F_interf[:, 1 : NBPOINTS + 1] - F_interf[:, 0:NBPOINTS])
+                + Delta_t * S[:, :]
+            )
+        )
+        # Second half step of strang-splitting
+        if HEATFLUX and IMPlICIT:
+            SetInlet(P[:, 0], U_LeftGhost, P_LeftGhost, Mi, boolSizImposed, J, 3)
+            SetOutlet(P[:, -1], U_RightGhost, P_RightGhost, J)
+            P[3, :] = heatFluxImplicit(np.concatenate([P_LeftGhost, P, P_RightGhost], axis=1))
+            U[3, :] = 3.0 / 2.0 * P[1, :] * phy_const.e * P[3, :]
+
+        # Compute the current
+        J = compute_I(P, V)
+
+        # Compute the primitive vars for next step
+        ConsToPrim(U, P, J)
+
+        # Compute RLC Circuit
+        if boolCircuit:
+            dJdt = (J - Jm1) / Delta_t
+            RHS_Volt2[0] = X_Volt2[1]
+            RHS_Volt2[1] = (
+                -1 / (R * C) * X_Volt2[1] - 1.0 / (L * C) * X_Volt2[0] + 1 / C * dJdt
+            )
+            X_Volt3 = (
+                1.0 / 3.0 * X_Volt0
+                + 2.0 / 3.0 * X_Volt2
+                + 2.0 / 3.0 * Delta_t * RHS_Volt2
+            )
+
+            # Reinitialize for the Circuit
+            Jm1 = J
+            X_Volt0[:] = X_Volt3[:]
+
+            # Change the Voltage
+            V = V0 - X_Volt0[0]
+        time += Delta_t
+        iter += 1
+
+# Saves the last frame
+Efield = compute_E(P)
+filenameTemp = ResultsData + "/MacroscopicVars_" + f"{i_save:06d}" + ".pkl"
+pickle.dump(
+    [time, P, U, P_LeftGhost, P_RightGhost, J, Efield, V], open(filenameTemp, "wb")
+)
+i_save += 1
+print(
+    "Iter = ",
+    iter,
+    "\tTime = {:.2f}~µs".format(time / 1e-6),
+    "\tI = {:.4f}~A".format(J),
+    "\tJ = {:.3e} A/m2".format(J/A0),
+)
+
+ttime_end = ttime.time()
+print("Exec time = {:.2f} s".format(ttime_end - tttime_start))

@@ -107,13 +107,13 @@ def ConsToPrim(fU, fP, fMi, fA0, fJ=0.0):
 
 
 # @njit
-def InviscidFlux(fP, fF, fVG, fMi, tau_xy = 0.):
+def InviscidFlux(fP, fF, fVG, fMi, tau_xy = 0., heat_flux_vec = 0.):
     fF[0, :] = fP[0, :] * fVG * fMi # rho_g*v_g
     fF[1, :] = fP[1, :] * fP[2, :] * fMi # rho_i*v_i
     fF[2, :] = (
         fMi* fP[1, :] * fP[2, :] * fP[2, :] + fP[1, :] * phy_const.e * fP[3, :]
     )  # M*n_i*v_i**2 + p_e
-    fF[3, :] = (5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :] + 0.5 * phy_const.m_e * fP[1, :] * fP[5, :]**2) * fP[4, :] + tau_xy * fP[5, :] # (1/2*rhoe*uey^2*v_e + 5/2n_i*e*T_e*v_e)
+    fF[3, :] = (5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :] + 0.5 * phy_const.m_e * fP[1, :] * fP[5, :]**2) * fP[4, :] + tau_xy * fP[5, :] + heat_flux_vec# (1/2*rhoe*uey^2*v_e + 5/2n_i*e*T_e*v_e)
     fF[4, :] = phy_const.m_e * fP[1, :] * fP[5, :] * fP[4, :]            # (rhoe*uey*uex)
     # print((5.0 / 2.0 * fP[1, :] * phy_const.e * fP[3, :])* fP[4, :])
     # print(tau_xy* fP[5, :])
@@ -917,14 +917,20 @@ def main(fconfigfile):
     P_Outlet = np.ones((6, 1))  # Ghost cell on the right
 
     try:
-        empirical_term = np.loadtxt('empirical_term_add_1.txt')
+        empirical_term = np.loadtxt('empirical_term_add_5.txt')
         # empirical_term = np.loadtxt('empirical_term_1.txt')
         empirical_term_interp_y = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 1])
         print("Empirical term y loaded.")
         empirical_term_interp_x = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 2])
         print("Empirical term x loaded.")
         tau_xy_temp = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 3])
-        tau_xy = -linear_extrapolation_multi(tau_xy_temp, 2)
+        tau_xy = linear_extrapolation_multi(tau_xy_temp, 2)
+        print("tau_xy loaded")
+        heat_flux_temp = np.interp(x_center, empirical_term[:, 0]/100, empirical_term[:, 4])
+        heat_flux = linear_extrapolation_multi(heat_flux_temp, 2)
+        print("heatflux loaded")
+        # plt.savefig("tau_xy.png")
+        # plt.close()
     except:
         print("No empirical term file found.")
 
@@ -987,9 +993,12 @@ def main(fconfigfile):
     #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
     # with open('./Results/half_gradPxy_emp_term_30/Data/MacroscopicVars_000003.pkl', 'rb') as f:
     #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
+    # with open('./Results/heat_flux_1/Data/MacroscopicVars_000045.pkl', 'rb') as f:
+    #         [t_init, P_init, U_init, P_Inlet_init, P_Outlet_init, J_init, V_init, B_init, x_center_init] = pickle.load(f)
 
     alpha_B_init = compute_alphaB_array(x_center, 1.6238e-2 , 2.4560e-2, LTHR, msp.NBPOINTS_INIT)
-    wce_init = phy_const.e * B_init / phy_const.m_e # electron cyclotron frequency
+
+    wce_init = phy_const.e * Barr / phy_const.m_e # electron cyclotron frequency
 
     # Electron momentum - transfer collision frequency
     nu_m_init = alpha_B_init * wce_init
@@ -997,19 +1006,32 @@ def main(fconfigfile):
     ng_anode = MDOT / (Mi* A0 * VG)  # Initial propellant density ng at the anode location
     restart = True
     if restart:
-        P[1, :] = P_init[1, :]  # Initial ni
-        P[2, :] = P_init[2, :]  # Initial vi
-        P[3, :] = P_init[3, :]  # Initial Te
-        P[4, :] = P_init[4, :] # Initial Ve
+        ng = np.interp(x_center, x_center_init, P_init[0, :])
+        ni = np.interp(x_center, x_center_init, P_init[1, :])
+        vi = np.interp(x_center, x_center_init, P_init[2, :])
+        Te = np.interp(x_center, x_center_init, P_init[3, :])
+        Ve = np.interp(x_center, x_center_init, P_init[4, :])
+        Ue_y = np.interp(x_center, x_center_init, P_init[5, :])
+
+        P[1, :] = ni  # Initial ni
+        P[2, :] = vi  # Initial vi
+        P[3, :] = Te  # Initial Te
+        P[4, :] = Ve # Initial Ve
+
+
+        plt.figure()
+        plt.plot(tau_xy[1:len(tau_xy)-1]*Ue_y)
+        plt.plot(heat_flux)
+        plt.show()
 
         # P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
         try:
-            P[5, :] = P_init[5, :]    # Initial Ue_y
+            P[5, :] = Ue_y    # Initial Ue_y
         except:
             P[5, :] = P_init[4, :]*wce_init/nu_m_init    # Initial Ue_y
         #P[0,:] = InitNeutralDensity(x_center, ng_anode, VG, P, IonizationConfig['Type'], SIZMAX, LSIZ1, LSIZ2) # initialize n_g in the space so that it is cst in time if there is no wall recombination.
         ### Warning, in the code currently, neutrals dyanmic is canceled.
-        P[0,:] = P_init[0]
+        P[0,:] = ng
     else:
         P[1, :] *= NI0  # Initial ni
         P[2, :] *= 0.0  # Initial vi
@@ -1089,7 +1111,7 @@ def main(fconfigfile):
             SetOutlet(P[:, -1], U_Outlet, P_Outlet, Mi, A0, Te_Cath, J)
 
             # Compute the Fluxes in the center of the cell
-            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi, tau_xy)
+            InviscidFlux(np.concatenate([P_Inlet, P, P_Outlet], axis=1), F_cell, VG, Mi, tau_xy, heat_flux)
 
             # Compute the convective Delta t
             Delta_t = ComputeDelta_t(np.concatenate([P_Inlet, P, P_Outlet], axis=1), NBPOINTS, Mi, CFL, Delta_x)
